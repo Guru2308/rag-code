@@ -1,0 +1,120 @@
+basePath: /api
+definitions:
+  api.indexRequest:
+    properties:
+      path:
+        type: string
+    required:
+    - path
+    type: object
+  domain.SearchQuery:
+    properties:
+      file_path:
+        type: string
+      filters:
+        additionalProperties:
+          type: string
+        type: object
+      language:
+        type: string
+      max_results:
+        type: integer
+      query:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@swagger.io
+    name: API Support
+    url: http://www.swagger.io/support
+  description: A basic RAG system for codebases.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: RAG Code API
+  version: "1.0"
+paths:
+  /index:
+    post:
+      consumes:
+      - application/json
+      description: Recursively parse and index code files from the given path
+      parameters:
+      - description: Path to index
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.indexRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Index a codebase
+      tags:
+      - indexing
+  /query:
+    post:
+      consumes:
+      - application/json
+      description: Search and answer questions about the codebase using hybrid retrieval
+        and LLM
+      parameters:
+      - description: Search query
+        in: body
+        name: query
+        required: true
+        schema:
+          $ref: '#/definitions/domain.SearchQuery'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Query the codebase
+      tags:
+      - query
+  /status:
+    get:
+      description: Check if the API server is alive
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - system
+swagger: "2.0"

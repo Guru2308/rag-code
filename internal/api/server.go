@@ -12,6 +12,8 @@ import (
 	"github.com/Guru2308/rag-code/internal/logger"
 	"github.com/Guru2308/rag-code/internal/retrieval"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // Server handles HTTP requests
@@ -54,6 +56,9 @@ func NewServer(port string, indexer *indexing.Indexer, retriever *retrieval.Retr
 }
 
 func (s *Server) setupRoutes() {
+	// Swagger documentation
+	s.router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
 	api := s.router.Group("/api")
 	{
 		api.POST("/index", s.handleIndex)
@@ -72,6 +77,16 @@ type indexRequest struct {
 	Path string `json:"path" binding:"required"`
 }
 
+// handleIndex starts indexing a project
+// @Summary      Index a codebase
+// @Description  Recursively parse and index code files from the given path
+// @Tags         indexing
+// @Accept       json
+// @Produce      json
+// @Param        request  body      indexRequest  true  "Path to index"
+// @Success      202      {object}  map[string]string
+// @Failure      400      {object}  map[string]string
+// @Router       /index [post]
 func (s *Server) handleIndex(c *gin.Context) {
 	var req indexRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -91,6 +106,17 @@ func (s *Server) handleIndex(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"status": "indexing_started", "path": req.Path})
 }
 
+// handleQuery handles codebase queries
+// @Summary      Query the codebase
+// @Description  Search and answer questions about the codebase using hybrid retrieval and LLM
+// @Tags         query
+// @Accept       json
+// @Produce      json
+// @Param        query  body      domain.SearchQuery  true  "Search query"
+// @Success      200    {object}  map[string]interface{}
+// @Failure      400    {object}  map[string]string
+// @Failure      500    {object}  map[string]string
+// @Router       /query [post]
 func (s *Server) handleQuery(c *gin.Context) {
 	var req domain.SearchQuery
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -137,12 +163,21 @@ func (s *Server) handleQuery(c *gin.Context) {
 		return
 	}
 
+	logger.Info("Generated LLM response", "query", req.Query, "response_length", len(response))
+
 	c.JSON(http.StatusOK, gin.H{
 		"response": response,
 		"results":  results,
 	})
 }
 
+// handleStatus returns the server status
+// @Summary      Health check
+// @Description  Check if the API server is alive
+// @Tags         system
+// @Produce      json
+// @Success      200  {object}  map[string]string
+// @Router       /status [get]
 func (s *Server) handleStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "alive"})
 }

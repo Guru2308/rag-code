@@ -11,52 +11,150 @@ import (
 
 // Retriever handles the retrieval of relevant code chunks
 type Retriever struct {
-	embedder indexing.Embedder
-	store    indexing.ChunkStore
+	embedder     indexing.Embedder
+	store        indexing.ChunkStore
+	redisIdx     *RedisIndex
+	bm25         *BM25Scorer
+	preprocessor *QueryPreprocessor
+	config       FusionConfig
 }
 
 // NewRetriever creates a new hybrid retriever
-func NewRetriever(embedder indexing.Embedder, store indexing.ChunkStore) *Retriever {
+func NewRetriever(
+	embedder indexing.Embedder,
+	store indexing.ChunkStore,
+	redisIdx *RedisIndex,
+	bm25 *BM25Scorer,
+	preprocessor *QueryPreprocessor,
+	config FusionConfig,
+) *Retriever {
 	return &Retriever{
-		embedder: embedder,
-		store:    store,
+		embedder:     embedder,
+		store:        store,
+		redisIdx:     redisIdx,
+		bm25:         bm25,
+		preprocessor: preprocessor,
+		config:       config,
 	}
 }
 
-// Retrieve finds relevant code chunks for a query
+// Retrieve finds relevant code chunks for a query using hybrid search
 func (r *Retriever) Retrieve(ctx context.Context, query domain.SearchQuery) ([]*domain.SearchResult, error) {
-	logger.Debug("Retrieving code chunks", "query", query.Query)
+	logger.Info("Retrieving code chunks", "query", query.Query, "max_results", query.MaxResults)
 
-	// 1. Generate embedding for the query
+	// 1. Preprocess the query
+	processed := r.preprocessor.Preprocess(query.Query)
+	if len(processed.Filtered) == 0 {
+		logger.Warn("Empty query after preprocessing", "query", query.Query)
+		// Return empty results or maybe fallback to original tokens if filtered is empty
+	}
+
+	// 2. Dense Retrieval (Vector Search)
 	queryVector, err := r.embedder.Embed(ctx, query.Query)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Vector Search (Dense Retrieval)
-	// We'll cast to the specific store implementation if needed, or update interface
-	// For now, let's assume the store has a Search method or we add it to the interface
-	results, err := r.vectorSearch(ctx, queryVector, query.MaxResults)
+	vectorResults, err := r.vectorSearch(ctx, queryVector, query.MaxResults*2) // Get more for better fusion
 	if err != nil {
-		return nil, err
+		logger.Error("Vector search failed", "error", err)
+		// Don't fail the whole request if vector search fails, we still have keyword search
+	} else {
+		for _, res := range vectorResults {
+			res.Source = "vector"
+		}
 	}
 
-	// 3. Keyword Search (Sparse Retrieval) - TODO: Implement BM25
-	// sparseResults, err := r.keywordSearch(ctx, query.Query)
+	// 3. Sparse Retrieval (Keyword Search via BM25)
+	var keywordResults []*domain.SearchResult
+	if r.redisIdx != nil && r.bm25 != nil {
+		docIDs, err := r.redisIdx.Search(ctx, processed.Filtered, query.MaxResults*2)
+		if err != nil {
+			logger.Error("Keyword search failed", "error", err)
+		} else {
+			// Retrieve full chunks for the docIDs and score them
+			// For now, we reuse the store to get chunks by ID if possible,
+			// or we need a way to get chunks from the store by IDs.
+			// Let's assume we can fetch them.
+			keywordResults = make([]*domain.SearchResult, 0, len(docIDs))
+			for _, id := range docIDs {
+				chunk, err := r.store.Get(ctx, id)
+				if err != nil {
+					continue
+				}
+				score, err := r.bm25.Score(ctx, processed.Filtered, id)
+				if err != nil {
+					continue
+				}
+				keywordResults = append(keywordResults, &domain.SearchResult{
+					Chunk:        chunk,
+					Score:        float32(score),
+					Source:       "keyword",
+					KeywordScore: float32(score),
+				})
+			}
+		}
+	}
 
-	// 4. Combine and Rerank (Simple for now)
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
+	// 4. Hybrid Fusion
+	var combined []*domain.SearchResult
+	if len(vectorResults) > 0 && len(keywordResults) > 0 {
+		combined = FuseResults(vectorResults, keywordResults, r.config)
+	} else if len(vectorResults) > 0 {
+		combined = vectorResults
+	} else {
+		combined = keywordResults
+	}
+
+	// 5. Final Sorting and Truncation
+	sort.Slice(combined, func(i, j int) bool {
+		return combined[i].Score > combined[j].Score
 	})
 
-	return results, nil
+	limit := query.MaxResults
+	if limit <= 0 {
+		limit = 10
+	}
+	if len(combined) > limit {
+		combined = combined[:limit]
+	}
+
+	// 6. Calculate Relevance Metadata
+	for _, res := range combined {
+		res.RelevanceScore = CalculateRelevance(res, query.Query)
+	}
+
+	return combined, nil
+}
+
+// AddToInvertedIndex adds chunks to the keyword index
+func (r *Retriever) AddToInvertedIndex(ctx context.Context, chunks []*domain.CodeChunk) error {
+	if r.redisIdx == nil {
+		return nil
+	}
+
+	indexedDocs := make([]*IndexedDocument, len(chunks))
+	for i, chunk := range chunks {
+		processed := r.preprocessor.Preprocess(chunk.Content)
+
+		tf := make(map[string]int)
+		for _, token := range processed.Tokens {
+			tf[token]++
+		}
+
+		indexedDocs[i] = &IndexedDocument{
+			ID:      chunk.ID,
+			Content: chunk.Content,
+			Length:  len(processed.Tokens),
+			Tokens:  tf,
+		}
+	}
+
+	return r.redisIdx.AddDocuments(ctx, indexedDocs)
 }
 
 // vectorSearch performs a vector search.
-// Note: We need to adapt the indexer interface or handle the search logic here if it's not in the interface.
 func (r *Retriever) vectorSearch(ctx context.Context, vector []float32, limit int) ([]*domain.SearchResult, error) {
-	// For now, we'll implement a bridge or extend the interface
-	// I'll add a Search method to the indexing.ChunkStore interface or handle it via a new interface
 	searchable, ok := r.store.(SearchableStore)
 	if !ok {
 		logger.Warn("Store does not support direct vector search")

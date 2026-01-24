@@ -8,11 +8,11 @@ type CodeChunk struct {
 	FilePath     string            `json:"file_path"`
 	Language     string            `json:"language"`
 	Content      string            `json:"content"`
-	ChunkType    ChunkType         `json:"chunk_type"`    // function, class, import, etc.
+	ChunkType    ChunkType         `json:"chunk_type"` // function, class, import, etc.
 	StartLine    int               `json:"start_line"`
 	EndLine      int               `json:"end_line"`
 	Metadata     map[string]string `json:"metadata"`
-	Dependencies []string          `json:"dependencies"`  // imported modules, called functions
+	Dependencies []string          `json:"dependencies"` // imported modules, called functions
 	Embedding    []float32         `json:"embedding,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
@@ -32,27 +32,29 @@ const (
 
 // SearchQuery represents a user's query
 type SearchQuery struct {
-	Query       string            `json:"query"`
-	Language    string            `json:"language,omitempty"`
-	FilePath    string            `json:"file_path,omitempty"`
-	MaxResults  int               `json:"max_results,omitempty"`
-	Filters     map[string]string `json:"filters,omitempty"`
+	Query      string            `json:"query"`
+	Language   string            `json:"language,omitempty"`
+	FilePath   string            `json:"file_path,omitempty"`
+	MaxResults int               `json:"max_results,omitempty"`
+	Filters    map[string]string `json:"filters,omitempty"`
 }
 
 // SearchResult represents a single search result
 type SearchResult struct {
-	Chunk     *CodeChunk `json:"chunk"`
-	Score     float32    `json:"score"`
-	Source    string     `json:"source"`     // "vector", "keyword", "hybrid"
-	Relevance float32    `json:"relevance"`
+	Chunk          *CodeChunk `json:"chunk"`
+	Score          float32    `json:"-"`
+	Source         string     `json:"source"` // "vector", "keyword", "hybrid"
+	VectorScore    float32    `json:"vector_score,omitempty"`
+	KeywordScore   float32    `json:"keyword_score,omitempty"`
+	RelevanceScore float32    `json:"relevance_score"`
 }
 
 // RetrievalContext represents the final context for LLM
 type RetrievalContext struct {
-	Query        string          `json:"query"`
-	Results      []*SearchResult `json:"results"`
-	TotalTokens  int             `json:"total_tokens"`
-	Metadata     map[string]any  `json:"metadata"`
+	Query       string          `json:"query"`
+	Results     []*SearchResult `json:"results"`
+	TotalTokens int             `json:"total_tokens"`
+	Metadata    map[string]any  `json:"metadata"`
 }
 
 // IndexingJob represents a code indexing task

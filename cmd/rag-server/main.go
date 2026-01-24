@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	_ "github.com/Guru2308/rag-code/docs"
 	"github.com/Guru2308/rag-code/internal/api"
 	"github.com/Guru2308/rag-code/internal/config"
 	"github.com/Guru2308/rag-code/internal/embeddings"
@@ -14,7 +15,23 @@ import (
 	"github.com/Guru2308/rag-code/internal/logger"
 	"github.com/Guru2308/rag-code/internal/retrieval"
 	"github.com/Guru2308/rag-code/internal/vectorstore"
+	"github.com/redis/go-redis/v9"
 )
+
+// @title           RAG Code API
+// @version         1.0
+// @description     A basic RAG system for codebases.
+// @termsOfService  http://swagger.io/terms/
+
+// @contact.name   API Support
+// @contact.url    http://www.swagger.io/support
+// @contact.email  support@swagger.io
+
+// @license.name  MIT
+// @license.url   https://opensource.org/licenses/MIT
+
+// @host      localhost:8080
+// @BasePath  /api
 
 func main() {
 	// Load configuration
@@ -56,10 +73,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 4. Indexing Pipeline
+	// 4. Redis Inverted Index (for BM25)
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisURL,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+	redisIndex := retrieval.NewRedisIndex(redisClient, "rag:")
+
+	// 5. Hybrid Retrieval Components
+	preprocessor := retrieval.NewQueryPreprocessor()
+	bm25Scorer := retrieval.NewBM25Scorer(cfg.BM25K1, cfg.BM25B, redisIndex)
+
+	fusionConfig := retrieval.FusionConfig{
+		Strategy:     retrieval.FusionRRF, // Defaulting to RRF for now
+		VectorWeight: cfg.HybridVectorWeight,
+		RRFConstant:  60,
+	}
+
+	// 6. Retrieval Engine
+	retr := retrieval.NewRetriever(embedder, qStore, redisIndex, bm25Scorer, preprocessor, fusionConfig)
+
+	// 7. Indexing Pipeline
 	parser := indexing.NewGoParser()
 	chunker := indexing.NewSemanticChunker(cfg.MaxChunkSize, cfg.ChunkOverlap)
-	indexer := indexing.NewIndexer(parser, chunker, embedder, qStore)
+	indexer := indexing.NewIndexer(parser, chunker, embedder, qStore, retr)
 
 	// Initialize Collection in Qdrant
 	// all-minilm (sentence-transformers) typically has 384 dimensions
@@ -70,11 +108,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 5. Retrieval Engine
-	retriever := retrieval.NewRetriever(embedder, qStore)
-
-	// 6. API Server
-	srv := api.NewServer(cfg.ServerPort, indexer, retriever, llmClient)
+	// 8. API Server
+	srv := api.NewServer(cfg.ServerPort, indexer, retr, llmClient)
 
 	logger.Info("All services initialized successfully")
 

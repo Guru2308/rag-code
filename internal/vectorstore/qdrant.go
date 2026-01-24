@@ -61,14 +61,30 @@ func (s *QdrantStore) Store(ctx context.Context, chunks []*domain.CodeChunk) err
 	points := make([]*qdrant.PointStruct, len(chunks))
 
 	for i, chunk := range chunks {
-		payload := qdrant.NewValueMap(map[string]any{
+		payloadMap := map[string]any{
 			"file_path":  chunk.FilePath,
 			"language":   chunk.Language,
 			"chunk_type": string(chunk.ChunkType),
 			"start_line": float64(chunk.StartLine),
 			"end_line":   float64(chunk.EndLine),
 			"content":    chunk.Content,
-		})
+		}
+
+		// Store dependencies
+		if len(chunk.Dependencies) > 0 {
+			payloadMap["dependencies"] = chunk.Dependencies
+		}
+
+		// Store metadata
+		if len(chunk.Metadata) > 0 {
+			metadataMap := make(map[string]any)
+			for k, v := range chunk.Metadata {
+				metadataMap[k] = v
+			}
+			payloadMap["metadata"] = metadataMap
+		}
+
+		payload := qdrant.NewValueMap(payloadMap)
 
 		points[i] = &qdrant.PointStruct{
 			Id:      qdrant.NewID(chunk.ID),
@@ -105,7 +121,21 @@ func (s *QdrantStore) Delete(ctx context.Context, filePath string) error {
 
 // Get retrieves a single chunk by ID
 func (s *QdrantStore) Get(ctx context.Context, id string) (*domain.CodeChunk, error) {
-	return nil, errors.InternalError("Get not implemented yet")
+	resp, err := s.client.Get(ctx, &qdrant.GetPoints{
+		CollectionName: s.collection,
+		Ids:            []*qdrant.PointId{qdrant.NewID(id)},
+		WithPayload:    qdrant.NewWithPayload(true),
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, errors.ErrorTypeExternal, "failed to get point from Qdrant")
+	}
+
+	if len(resp) == 0 {
+		return nil, errors.NotFoundError("chunk not found")
+	}
+
+	point := resp[0]
+	return s.mapPointToChunk(point), nil
 }
 
 // Search performs a vector search in Qdrant
@@ -122,15 +152,7 @@ func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit i
 
 	results := make([]*domain.SearchResult, len(resp))
 	for i, point := range resp {
-		chunk := &domain.CodeChunk{
-			ID:        point.Id.GetUuid(),
-			FilePath:  point.Payload["file_path"].GetStringValue(),
-			Language:  point.Payload["language"].GetStringValue(),
-			Content:   point.Payload["content"].GetStringValue(),
-			StartLine: int(point.Payload["start_line"].GetDoubleValue()),
-			EndLine:   int(point.Payload["end_line"].GetDoubleValue()),
-		}
-
+		chunk := s.mapScoredPointToChunk(point)
 		results[i] = &domain.SearchResult{
 			Chunk: chunk,
 			Score: float32(point.Score),
@@ -138,6 +160,80 @@ func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit i
 	}
 
 	return results, nil
+}
+
+// mapPointToChunk converts a Qdrant RetrievedPoint to a CodeChunk
+func (s *QdrantStore) mapPointToChunk(point *qdrant.RetrievedPoint) *domain.CodeChunk {
+	chunk := &domain.CodeChunk{
+		ID:        point.Id.GetUuid(),
+		FilePath:  point.Payload["file_path"].GetStringValue(),
+		Language:  point.Payload["language"].GetStringValue(),
+		Content:   point.Payload["content"].GetStringValue(),
+		ChunkType: domain.ChunkType(point.Payload["chunk_type"].GetStringValue()),
+		StartLine: int(point.Payload["start_line"].GetDoubleValue()),
+		EndLine:   int(point.Payload["end_line"].GetDoubleValue()),
+	}
+
+	// Retrieve dependencies
+	if depsValue, ok := point.Payload["dependencies"]; ok {
+		if listValue := depsValue.GetListValue(); listValue != nil {
+			deps := make([]string, len(listValue.Values))
+			for i, v := range listValue.Values {
+				deps[i] = v.GetStringValue()
+			}
+			chunk.Dependencies = deps
+		}
+	}
+
+	// Retrieve metadata
+	if metaValue, ok := point.Payload["metadata"]; ok {
+		if structValue := metaValue.GetStructValue(); structValue != nil {
+			meta := make(map[string]string)
+			for k, v := range structValue.Fields {
+				meta[k] = v.GetStringValue()
+			}
+			chunk.Metadata = meta
+		}
+	}
+
+	return chunk
+}
+
+// mapScoredPointToChunk converts a Qdrant ScoredPoint to a CodeChunk
+func (s *QdrantStore) mapScoredPointToChunk(point *qdrant.ScoredPoint) *domain.CodeChunk {
+	chunk := &domain.CodeChunk{
+		ID:        point.Id.GetUuid(),
+		FilePath:  point.Payload["file_path"].GetStringValue(),
+		Language:  point.Payload["language"].GetStringValue(),
+		Content:   point.Payload["content"].GetStringValue(),
+		ChunkType: domain.ChunkType(point.Payload["chunk_type"].GetStringValue()),
+		StartLine: int(point.Payload["start_line"].GetDoubleValue()),
+		EndLine:   int(point.Payload["end_line"].GetDoubleValue()),
+	}
+
+	// Retrieve dependencies
+	if depsValue, ok := point.Payload["dependencies"]; ok {
+		if listValue := depsValue.GetListValue(); listValue != nil {
+			deps := make([]string, len(listValue.Values))
+			for i, v := range listValue.Values {
+				deps[i] = v.GetStringValue()
+			}
+			chunk.Dependencies = deps
+		}
+	}
+
+	// Retrieve metadata
+	if metaValue, ok := point.Payload["metadata"]; ok {
+		if structValue := metaValue.GetStructValue(); structValue != nil {
+			meta := make(map[string]string)
+			for k, v := range structValue.Fields {
+				meta[k] = v.GetStringValue()
+			}
+			chunk.Metadata = meta
+		}
+	}
+
+	return chunk
 }
 
 // InitCollection ensures the collection exists with correct dimensions

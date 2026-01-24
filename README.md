@@ -1,137 +1,107 @@
-# RAG System - Cursor-style Code Understanding
+# RAG System for Codebases
 
-A production-grade RAG (Retrieval-Augmented Generation) system for understanding and querying codebases, built in Go.
+A production-grade RAG system combining dense vector search and sparse keyword retrieval for deep code understanding.
 
 ## Features
 
-- Intelligent Code Indexing: AST-based parsing for deep code understanding
-- Hybrid Retrieval: Combines dense (vector) and sparse (keyword) search
-- Hierarchical Context: File to function to line level selection
-- Smart Reranking: Code-aware relevance scoring
-- LLM Integration: Ollama compatable in dev environment
-- Real-time Updates: File watcher for automatic re-indexing
+- **Hybrid Retrieval**: Combines Qdrant (Vector) and Redis (Keyword/BM25) with RRF fusion.
+- **Deep Indexing**: AST-based parsing for chunking of Go code.
+- **Hierarchical Context**: Understanding from file to function level.
+- **LLM Integration**: Works seamlessly with local Ollama models.
+- **Automated Docs**: Swagger/OpenAPI documentation auto-generated.
 
-## Quick Start
+## Infrastructure Setup
+
+The system uses a hybrid deployment model for the best local development experience:
+- **Infrastructure**: Qdrant and Redis run in Docker containers (via Docker Compose).
+- **Application**: The Go server runs natively on your host for full filesystem access.
 
 ### Prerequisites
+- Go 1.22+
+- Docker & Docker Compose
+- [Ollama](https://ollama.ai) running locally
 
-- Go 1.21+
-- Docker (for Qdrant vector database)
-- Ollama in local
+### Quick Start
 
-### Installation
+1. **Start Infrastructure** (Qdrant & Redis)
+   ```bash
+   docker-compose up -d
+   ```
+
+2. **Build Server**
+   ```bash
+   go build -o rag-server cmd/rag-server/main.go
+   ```
+
+3. **Run Server**
+   ```bash
+   ./rag-server
+   ```
+   The API will be available at `http://localhost:8080`.
+
+## API Usage
+
+### Indexing a Codebase
+You can index any folder on your local machine.
 
 ```bash
-# Install dependencies
-go mod download
-
-# Start Qdrant vector database
-docker run -p 6333:6333 qdrant/qdrant
-
-# Configure environment
-vim .env
-
-# Run the server
-go run cmd/rag-server/main.go
+curl -X POST http://localhost:8080/api/index \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/Users/guru/projects/my-app"}'
 ```
 
-### Configuration
+### Querying
+Ask natural language questions about your code.
 
-Edit `.env` file:
+```bash
+curl -X POST http://localhost:8080/api/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "How is authentication handled?",
+    "max_results": 5
+  }'
+```
+
+## API Documentation
+
+Swagger UI is available at:
+`http://localhost:8080/swagger/index.html`
+
+Regenerate docs:
+```bash
+swag init -g cmd/rag-server/main.go
+```
+
+## Configuration
+
+Configuration is managed via `.env` file.
 
 ```env
-# Ollama Configuration
+# Ollama
 OLLAMA_URL=http://localhost:11434
 EMBEDDING_MODEL=all-minilm
 LLM_MODEL=llama3.2:1b
 
-# Vector Store Configuration
+# Databases
 VECTOR_STORE_URL=http://localhost:6333
-COLLECTION_NAME=code_chunks
+REDIS_URL=localhost:6379
 
-# Indexing Configuration
-TARGET_CODEBASE=/path/to/indexing
-
-# Server Configuration
-SERVER_PORT=8080
-
-# Logging Configuration
-LOG_LEVEL=info
-LOG_FORMAT=json
-```
-
-### Usage
-
-```bash
-# Index a codebase
-curl -X POST http://localhost:8080/api/index \
-  -H "Content-Type: application/json" \
-  -d '{"path": "/path/to/your/codebase"}'
-
-# Query the codebase
-curl -X POST http://localhost:8080/api/query \
-  -H "Content-Type: application/json" \
-  -d '{"query": "How does authentication work?"}'
-```
-
-## Architecture
-
-```
-User Query → Intent Detection → Embedding → Hybrid Retrieval
-  → Hierarchical Filtering → Reranking → Prompt Assembly → LLM
-```
-
-Background indexing pipeline:
-```
-File Change → Parse → Chunk → Embed → Vector Store
+# Hybrid Search Tuning
+HYBRID_ENABLED=true
+HYBRID_VECTOR_WEIGHT=0.7
+FUSION_STRATEGY=rrf
 ```
 
 ## Project Structure
 
 ```
-rag-code/
-├── cmd/rag-server/           # Entry point
+├── cmd/rag-server/      # Application entrypoint
 ├── internal/
-│   ├── config/              # Configuration management
-│   ├── logger/              # Structured logging
-│   ├── errors/              # Error handling
-│   ├── validator/           # Input validation
-│   ├── domain/              # Domain models
-│   ├── indexing/            # Code parsing and chunking
-│   ├── embeddings/          # Embedding generation
-│   ├── vectorstore/         # Vector DB operations
-│   ├── retrieval/           # Query and search
-│   ├── hierarchy/           # Context selection
-│   ├── reranker/            # Result reranking
-│   ├── prompt/              # Prompt assembly
-│   ├── llm/                 # LLM integration
-│   └── api/                 # HTTP API
-└── docs/                    # Documentation
+│   ├── api/             # HTTP handlers & middleware
+│   ├── indexing/        # AST parsing & chunking logic
+│   ├── retrieval/       # Hybrid search & ranking engine
+│   ├── vectorstore/     # Qdrant integration
+│   └── domain/          # Core data models
+├── docs/                # Generated Swagger docs
+└── docker-compose.yml   # Infrastructure orchestration
 ```
-
-## Development
-
-### Current Status
-
-Phase 0 and Phase 1 complete. See implementation guide for next steps.
-
-### Running Tests
-
-```bash
-go test ./...
-```
-
-### Building
-
-```bash
-go build -o rag-server cmd/rag-server/main.go
-```
-
-## Documentation
-
-- [Architecture](docs/architecture/ARCHITECTURE.md)
-- [Implementation Plan](cursor_rag_implementation_plan.md)
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

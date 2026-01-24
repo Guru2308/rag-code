@@ -14,12 +14,18 @@ import (
 
 // Indexer coordinates the indexing pipeline
 type Indexer struct {
-	parser   Parser
-	chunker  Chunker
-	embedder Embedder
-	store    ChunkStore
-	mu       sync.RWMutex
-	jobs     map[string]*domain.IndexingJob
+	parser         Parser
+	chunker        Chunker
+	embedder       Embedder
+	store          ChunkStore
+	keywordIndexer KeywordIndexer
+	mu             sync.RWMutex
+	jobs           map[string]*domain.IndexingJob
+}
+
+// KeywordIndexer defines the interface for adding chunks to the keyword index
+type KeywordIndexer interface {
+	AddToInvertedIndex(ctx context.Context, chunks []*domain.CodeChunk) error
 }
 
 // Embedder generates embeddings for code chunks
@@ -44,13 +50,14 @@ type Config struct {
 }
 
 // NewIndexer creates a new indexer
-func NewIndexer(parser Parser, chunker Chunker, embedder Embedder, store ChunkStore) *Indexer {
+func NewIndexer(parser Parser, chunker Chunker, embedder Embedder, store ChunkStore, keywordIndexer KeywordIndexer) *Indexer {
 	return &Indexer{
-		parser:   parser,
-		chunker:  chunker,
-		embedder: embedder,
-		store:    store,
-		jobs:     make(map[string]*domain.IndexingJob),
+		parser:         parser,
+		chunker:        chunker,
+		embedder:       embedder,
+		store:          store,
+		keywordIndexer: keywordIndexer,
+		jobs:           make(map[string]*domain.IndexingJob),
 	}
 }
 
@@ -101,6 +108,14 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 	// Store chunks
 	if err := idx.store.Store(ctx, processedChunks); err != nil {
 		return errors.Wrap(err, errors.ErrorTypeInternal, "failed to store chunks")
+	}
+
+	// Add to keyword index if available
+	if idx.keywordIndexer != nil {
+		if err := idx.keywordIndexer.AddToInvertedIndex(ctx, processedChunks); err != nil {
+			logger.Error("Failed to add to keyword index", "error", err, "path", filePath)
+			// Don't fail the whole indexing process if keyword indexing fails
+		}
 	}
 
 	logger.Info("File indexed successfully",
