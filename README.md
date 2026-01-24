@@ -8,7 +8,7 @@ A production-grade RAG (Retrieval-Augmented Generation) system for understanding
 - Hybrid Retrieval: Combines dense (vector) and sparse (keyword) search
 - Hierarchical Context: File to function to line level selection
 - Smart Reranking: Code-aware relevance scoring
-- LLM Integration: OpenAI and Anthropic support with streaming
+- LLM Integration: Ollama compatable in dev environment
 - Real-time Updates: File watcher for automatic re-indexing
 
 ## Quick Start
@@ -17,7 +17,7 @@ A production-grade RAG (Retrieval-Augmented Generation) system for understanding
 
 - Go 1.21+
 - Docker (for Qdrant vector database)
-- OpenAI or Anthropic API key
+- Ollama in local
 
 ### Installation
 
@@ -29,8 +29,7 @@ go mod download
 docker run -p 6333:6333 qdrant/qdrant
 
 # Configure environment
-cp .env.example .env
-# Edit .env with your API keys
+vim .env
 
 # Run the server
 go run cmd/rag-server/main.go
@@ -41,10 +40,22 @@ go run cmd/rag-server/main.go
 Edit `.env` file:
 
 ```env
-OPENAI_API_KEY=your-key-here
-EMBEDDING_MODEL=text-embedding-3-small
-LLM_MODEL=gpt-4
+# Ollama Configuration
+OLLAMA_URL=http://localhost:11434
+EMBEDDING_MODEL=all-minilm
+LLM_MODEL=llama3.2:1b
+
+# Vector Store Configuration
 VECTOR_STORE_URL=http://localhost:6333
+COLLECTION_NAME=code_chunks
+
+# Indexing Configuration
+TARGET_CODEBASE=/path/to/indexing
+
+# Server Configuration
+SERVER_PORT=8080
+
+# Logging Configuration
 LOG_LEVEL=info
 LOG_FORMAT=json
 ```
