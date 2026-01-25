@@ -12,9 +12,19 @@ import (
 	"github.com/qdrant/go-client/qdrant"
 )
 
+// QdrantClient defines the interface for Qdrant operations to allow mocking
+type QdrantClient interface {
+	Upsert(ctx context.Context, in *qdrant.UpsertPoints) (*qdrant.UpdateResult, error)
+	Delete(ctx context.Context, in *qdrant.DeletePoints) (*qdrant.UpdateResult, error)
+	Get(ctx context.Context, in *qdrant.GetPoints) ([]*qdrant.RetrievedPoint, error)
+	Query(ctx context.Context, in *qdrant.QueryPoints) ([]*qdrant.ScoredPoint, error)
+	CollectionExists(ctx context.Context, collectionName string) (bool, error)
+	CreateCollection(ctx context.Context, in *qdrant.CreateCollection) error
+}
+
 // QdrantStore implements the ChunkStore interface using Qdrant
 type QdrantStore struct {
-	client     *qdrant.Client
+	client     QdrantClient
 	collection string
 }
 
@@ -72,7 +82,11 @@ func (s *QdrantStore) Store(ctx context.Context, chunks []*domain.CodeChunk) err
 
 		// Store dependencies
 		if len(chunk.Dependencies) > 0 {
-			payloadMap["dependencies"] = chunk.Dependencies
+			deps := make([]interface{}, len(chunk.Dependencies))
+			for i, v := range chunk.Dependencies {
+				deps[i] = v
+			}
+			payloadMap["dependencies"] = deps
 		}
 
 		// Store metadata
@@ -164,55 +178,28 @@ func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit i
 
 // mapPointToChunk converts a Qdrant RetrievedPoint to a CodeChunk
 func (s *QdrantStore) mapPointToChunk(point *qdrant.RetrievedPoint) *domain.CodeChunk {
-	chunk := &domain.CodeChunk{
-		ID:        point.Id.GetUuid(),
-		FilePath:  point.Payload["file_path"].GetStringValue(),
-		Language:  point.Payload["language"].GetStringValue(),
-		Content:   point.Payload["content"].GetStringValue(),
-		ChunkType: domain.ChunkType(point.Payload["chunk_type"].GetStringValue()),
-		StartLine: int(point.Payload["start_line"].GetDoubleValue()),
-		EndLine:   int(point.Payload["end_line"].GetDoubleValue()),
-	}
-
-	// Retrieve dependencies
-	if depsValue, ok := point.Payload["dependencies"]; ok {
-		if listValue := depsValue.GetListValue(); listValue != nil {
-			deps := make([]string, len(listValue.Values))
-			for i, v := range listValue.Values {
-				deps[i] = v.GetStringValue()
-			}
-			chunk.Dependencies = deps
-		}
-	}
-
-	// Retrieve metadata
-	if metaValue, ok := point.Payload["metadata"]; ok {
-		if structValue := metaValue.GetStructValue(); structValue != nil {
-			meta := make(map[string]string)
-			for k, v := range structValue.Fields {
-				meta[k] = v.GetStringValue()
-			}
-			chunk.Metadata = meta
-		}
-	}
-
-	return chunk
+	return s.mapPayloadToChunk(point.Id.GetUuid(), point.Payload)
 }
 
 // mapScoredPointToChunk converts a Qdrant ScoredPoint to a CodeChunk
 func (s *QdrantStore) mapScoredPointToChunk(point *qdrant.ScoredPoint) *domain.CodeChunk {
+	return s.mapPayloadToChunk(point.Id.GetUuid(), point.Payload)
+}
+
+// mapPayloadToChunk helper to convert payload map to CodeChunk
+func (s *QdrantStore) mapPayloadToChunk(id string, payload map[string]*qdrant.Value) *domain.CodeChunk {
 	chunk := &domain.CodeChunk{
-		ID:        point.Id.GetUuid(),
-		FilePath:  point.Payload["file_path"].GetStringValue(),
-		Language:  point.Payload["language"].GetStringValue(),
-		Content:   point.Payload["content"].GetStringValue(),
-		ChunkType: domain.ChunkType(point.Payload["chunk_type"].GetStringValue()),
-		StartLine: int(point.Payload["start_line"].GetDoubleValue()),
-		EndLine:   int(point.Payload["end_line"].GetDoubleValue()),
+		ID:        id,
+		FilePath:  payload["file_path"].GetStringValue(),
+		Language:  payload["language"].GetStringValue(),
+		Content:   payload["content"].GetStringValue(),
+		ChunkType: domain.ChunkType(payload["chunk_type"].GetStringValue()),
+		StartLine: int(payload["start_line"].GetDoubleValue()),
+		EndLine:   int(payload["end_line"].GetDoubleValue()),
 	}
 
 	// Retrieve dependencies
-	if depsValue, ok := point.Payload["dependencies"]; ok {
+	if depsValue, ok := payload["dependencies"]; ok {
 		if listValue := depsValue.GetListValue(); listValue != nil {
 			deps := make([]string, len(listValue.Values))
 			for i, v := range listValue.Values {
@@ -223,7 +210,7 @@ func (s *QdrantStore) mapScoredPointToChunk(point *qdrant.ScoredPoint) *domain.C
 	}
 
 	// Retrieve metadata
-	if metaValue, ok := point.Payload["metadata"]; ok {
+	if metaValue, ok := payload["metadata"]; ok {
 		if structValue := metaValue.GetStructValue(); structValue != nil {
 			meta := make(map[string]string)
 			for k, v := range structValue.Fields {

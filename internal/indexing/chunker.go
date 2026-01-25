@@ -63,15 +63,7 @@ func (c *SemanticChunker) Chunk(ctx context.Context, chunks []*domain.CodeChunk,
 func (c *SemanticChunker) splitLargeChunk(chunk *domain.CodeChunk, maxSize int) []*domain.CodeChunk {
 	content := chunk.Content
 	chunks := make([]*domain.CodeChunk, 0)
-
-	// Determine step size to maintain overlap
-	step := maxSize - c.overlap
-	if step < 1 {
-		step = maxSize / 2
-	}
-	if step < 1 {
-		step = 1
-	}
+	step := c.calculateStep(maxSize)
 
 	for start := 0; start < len(content); {
 		end := start + maxSize
@@ -79,51 +71,74 @@ func (c *SemanticChunker) splitLargeChunk(chunk *domain.CodeChunk, maxSize int) 
 			end = len(content)
 		}
 
-		// Try to find a good breaking point (newline) within the last 20% of the chunk
-		breakPoint := end
-		if end < len(content) {
-			searchRange := maxSize / 5
-			if searchRange > 0 {
-				if lastNewline := strings.LastIndex(content[start:end], "\n"); lastNewline != -1 && lastNewline > maxSize-searchRange {
-					breakPoint = start + lastNewline + 1
-				}
-			}
-		}
-
+		breakPoint := c.findBreakPoint(content, start, end, maxSize)
 		subContent := content[start:breakPoint]
 
-		// Simple line number estimation for the sub-chunk
-		startLine := chunk.StartLine + strings.Count(content[:start], "\n")
-		endLine := startLine + strings.Count(subContent, "\n")
-
-		subChunk := &domain.CodeChunk{
-			FilePath:  chunk.FilePath,
-			Language:  chunk.Language,
-			Content:   subContent,
-			ChunkType: chunk.ChunkType,
-			StartLine: startLine,
-			EndLine:   endLine,
-			Metadata:  chunk.Metadata,
-		}
-		subChunk.ID = c.generateChunkID(subChunk)
-		subChunk.CreatedAt = time.Now()
-		subChunk.UpdatedAt = time.Now()
-
+		subChunk := c.createSubChunk(chunk, subContent, start)
 		chunks = append(chunks, subChunk)
 
 		if breakPoint >= len(content) {
 			break
 		}
 
-		// Move start forward by step, but ensure we don't get stuck
-		nextStart := start + step
-		if nextStart <= start {
-			nextStart = start + 1
-		}
-		start = nextStart
+		start = c.nextStart(start, step)
 	}
 
 	return chunks
+}
+
+func (c *SemanticChunker) calculateStep(maxSize int) int {
+	step := maxSize - c.overlap
+	if step < 1 {
+		step = maxSize / 2
+	}
+	if step < 1 {
+		step = 1
+	}
+	return step
+}
+
+func (c *SemanticChunker) findBreakPoint(content string, start, end, maxSize int) int {
+	if end >= len(content) {
+		return end
+	}
+
+	// Try to find a good breaking point (newline) within the last 20% of the chunk
+	searchRange := maxSize / 5
+	if searchRange > 0 {
+		if lastNewline := strings.LastIndex(content[start:end], "\n"); lastNewline != -1 && lastNewline > maxSize-searchRange {
+			return start + lastNewline + 1
+		}
+	}
+	return end
+}
+
+func (c *SemanticChunker) createSubChunk(original *domain.CodeChunk, subContent string, startOffset int) *domain.CodeChunk {
+	// Simple line number estimation for the sub-chunk
+	startLine := original.StartLine + strings.Count(original.Content[:startOffset], "\n")
+	endLine := startLine + strings.Count(subContent, "\n")
+
+	subChunk := &domain.CodeChunk{
+		FilePath:  original.FilePath,
+		Language:  original.Language,
+		Content:   subContent,
+		ChunkType: original.ChunkType,
+		StartLine: startLine,
+		EndLine:   endLine,
+		Metadata:  original.Metadata,
+	}
+	subChunk.ID = c.generateChunkID(subChunk)
+	subChunk.CreatedAt = time.Now()
+	subChunk.UpdatedAt = time.Now()
+	return subChunk
+}
+
+func (c *SemanticChunker) nextStart(currentStart, step int) int {
+	nextStart := currentStart + step
+	if nextStart <= currentStart {
+		return currentStart + 1
+	}
+	return nextStart
 }
 
 // generateChunkID creates a unique identifier for a chunk

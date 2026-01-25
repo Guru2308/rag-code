@@ -18,7 +18,7 @@ import (
 
 // Server handles HTTP requests
 type Server struct {
-	router    *gin.Engine
+	Router    *gin.Engine
 	indexer   *indexing.Indexer
 	retriever *retrieval.Retriever
 	llm       *llm.OllamaLLM
@@ -44,7 +44,7 @@ func NewServer(port string, indexer *indexing.Indexer, retriever *retrieval.Retr
 	})
 
 	s := &Server{
-		router:    router,
+		Router:    router,
 		indexer:   indexer,
 		retriever: retriever,
 		llm:       llmClient,
@@ -57,9 +57,9 @@ func NewServer(port string, indexer *indexing.Indexer, retriever *retrieval.Retr
 
 func (s *Server) setupRoutes() {
 	// Swagger documentation
-	s.router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	s.Router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	api := s.router.Group("/api")
+	api := s.Router.Group("/api")
 	{
 		api.POST("/index", s.handleIndex)
 		api.POST("/query", s.handleQuery)
@@ -70,7 +70,7 @@ func (s *Server) setupRoutes() {
 // Start runs the HTTP server
 func (s *Server) Start() error {
 	logger.Info("Starting API server", "port", s.port)
-	return s.router.Run(":" + s.port)
+	return s.Router.Run(":" + s.port)
 }
 
 type indexRequest struct {
