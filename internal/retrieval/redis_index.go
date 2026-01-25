@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/Guru2308/rag-code/internal/domain"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -81,6 +82,30 @@ func (r *RedisIndex) AddDocuments(ctx context.Context, docs []*IndexedDocument) 
 
 	_, err := pipe.Exec(ctx)
 	return err
+}
+
+// AddToInvertedIndex adds chunks to the inverted index (adapting domain.CodeChunk)
+func (r *RedisIndex) AddToInvertedIndex(ctx context.Context, chunks []*domain.CodeChunk) error {
+	indexedDocs := make([]*IndexedDocument, len(chunks))
+	preprocessor := NewQueryPreprocessor() // Use default preprocessor
+
+	for i, chunk := range chunks {
+		processed := preprocessor.Preprocess(chunk.Content)
+
+		tf := make(map[string]int)
+		for _, token := range processed.Tokens {
+			tf[token]++
+		}
+
+		indexedDocs[i] = &IndexedDocument{
+			ID:      chunk.ID,
+			Content: chunk.Content,
+			Length:  len(processed.Tokens),
+			Tokens:  tf,
+		}
+	}
+
+	return r.AddDocuments(ctx, indexedDocs)
 }
 
 // RemoveDocument removes a document from the inverted index

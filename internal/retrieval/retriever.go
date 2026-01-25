@@ -9,12 +9,23 @@ import (
 	"github.com/Guru2308/rag-code/internal/logger"
 )
 
+// KeywordSearcher defines interface for keyword-based search
+type KeywordSearcher interface {
+	Search(ctx context.Context, tokens []string, limit int) ([]string, error)
+	AddToInvertedIndex(ctx context.Context, chunks []*domain.CodeChunk) error
+}
+
+// Scorer defines interface for scoring documents
+type Scorer interface {
+	Score(ctx context.Context, queryTokens []string, docID string) (float64, error)
+}
+
 // Retriever handles the retrieval of relevant code chunks
 type Retriever struct {
 	embedder     indexing.Embedder
 	store        indexing.ChunkStore
-	redisIdx     *RedisIndex
-	bm25         *BM25Scorer
+	keyword      KeywordSearcher
+	scorer       Scorer
 	preprocessor *QueryPreprocessor
 	config       FusionConfig
 }
@@ -23,16 +34,16 @@ type Retriever struct {
 func NewRetriever(
 	embedder indexing.Embedder,
 	store indexing.ChunkStore,
-	redisIdx *RedisIndex,
-	bm25 *BM25Scorer,
+	keyword KeywordSearcher,
+	scorer Scorer,
 	preprocessor *QueryPreprocessor,
 	config FusionConfig,
 ) *Retriever {
 	return &Retriever{
 		embedder:     embedder,
 		store:        store,
-		redisIdx:     redisIdx,
-		bm25:         bm25,
+		keyword:      keyword,
+		scorer:       scorer,
 		preprocessor: preprocessor,
 		config:       config,
 	}
@@ -67,8 +78,8 @@ func (r *Retriever) Retrieve(ctx context.Context, query domain.SearchQuery) ([]*
 
 	// 3. Sparse Retrieval (Keyword Search via BM25)
 	var keywordResults []*domain.SearchResult
-	if r.redisIdx != nil && r.bm25 != nil {
-		docIDs, err := r.redisIdx.Search(ctx, processed.Filtered, query.MaxResults*2)
+	if r.keyword != nil && r.scorer != nil {
+		docIDs, err := r.keyword.Search(ctx, processed.Filtered, query.MaxResults*2)
 		if err != nil {
 			logger.Error("Keyword search failed", "error", err)
 		} else {
@@ -82,7 +93,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query domain.SearchQuery) ([]*
 				if err != nil {
 					continue
 				}
-				score, err := r.bm25.Score(ctx, processed.Filtered, id)
+				score, err := r.scorer.Score(ctx, processed.Filtered, id)
 				if err != nil {
 					continue
 				}
@@ -129,28 +140,22 @@ func (r *Retriever) Retrieve(ctx context.Context, query domain.SearchQuery) ([]*
 
 // AddToInvertedIndex adds chunks to the keyword index
 func (r *Retriever) AddToInvertedIndex(ctx context.Context, chunks []*domain.CodeChunk) error {
-	if r.redisIdx == nil {
+	if r.keyword == nil {
 		return nil
 	}
 
-	indexedDocs := make([]*IndexedDocument, len(chunks))
-	for i, chunk := range chunks {
-		processed := r.preprocessor.Preprocess(chunk.Content)
+	// We can delegate to the keyword implementation if it supports adding directly
+	// Or we stick to the original implementation if KeywordSearcher interface expects abstract chunks
+	// However, the original code constructed IndexedDocument struct.
+	// Let's assume the KeywordIndexer interface in indexing package matches what we need or we adapt.
+	// The previous interface definition we added:
+	// type KeywordSearcher interface {
+	//  	Search(ctx context.Context, tokens []string, limit int) ([]string, error)
+	//  	AddToInvertedIndex(ctx context.Context, chunks []*domain.CodeChunk) error
+	// }
+	// So we just call that.
 
-		tf := make(map[string]int)
-		for _, token := range processed.Tokens {
-			tf[token]++
-		}
-
-		indexedDocs[i] = &IndexedDocument{
-			ID:      chunk.ID,
-			Content: chunk.Content,
-			Length:  len(processed.Tokens),
-			Tokens:  tf,
-		}
-	}
-
-	return r.redisIdx.AddDocuments(ctx, indexedDocs)
+	return r.keyword.AddToInvertedIndex(ctx, chunks)
 }
 
 // vectorSearch performs a vector search.
