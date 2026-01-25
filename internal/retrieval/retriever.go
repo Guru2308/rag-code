@@ -53,89 +53,97 @@ func NewRetriever(
 func (r *Retriever) Retrieve(ctx context.Context, query domain.SearchQuery) ([]*domain.SearchResult, error) {
 	logger.Info("Retrieving code chunks", "query", query.Query, "max_results", query.MaxResults)
 
-	// 1. Preprocess the query
 	processed := r.preprocessor.Preprocess(query.Query)
 	if len(processed.Filtered) == 0 {
 		logger.Warn("Empty query after preprocessing", "query", query.Query)
-		// Return empty results or maybe fallback to original tokens if filtered is empty
 	}
 
-	// 2. Dense Retrieval (Vector Search)
+	vectorResults, err := r.executeVectorSearch(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	keywordResults := r.executeKeywordSearch(ctx, processed.Filtered, query.MaxResults)
+
+	combined := r.combineResults(vectorResults, keywordResults)
+
+	return r.finalizeResults(combined, query.MaxResults, query.Query), nil
+}
+
+func (r *Retriever) executeVectorSearch(ctx context.Context, query domain.SearchQuery) ([]*domain.SearchResult, error) {
 	queryVector, err := r.embedder.Embed(ctx, query.Query)
 	if err != nil {
 		return nil, err
 	}
 
-	vectorResults, err := r.vectorSearch(ctx, queryVector, query.MaxResults*2) // Get more for better fusion
+	vectorResults, err := r.vectorSearch(ctx, queryVector, query.MaxResults*2)
 	if err != nil {
 		logger.Error("Vector search failed", "error", err)
-		// Don't fail the whole request if vector search fails, we still have keyword search
-	} else {
-		for _, res := range vectorResults {
-			res.Source = "vector"
-		}
+		return nil, nil
 	}
 
-	// 3. Sparse Retrieval (Keyword Search via BM25)
-	var keywordResults []*domain.SearchResult
-	if r.keyword != nil && r.scorer != nil {
-		docIDs, err := r.keyword.Search(ctx, processed.Filtered, query.MaxResults*2)
+	for _, res := range vectorResults {
+		res.Source = "vector"
+	}
+	return vectorResults, nil
+}
+
+func (r *Retriever) executeKeywordSearch(ctx context.Context, tokens []string, limit int) []*domain.SearchResult {
+	if r.keyword == nil || r.scorer == nil {
+		return nil
+	}
+
+	docIDs, err := r.keyword.Search(ctx, tokens, limit*2)
+	if err != nil {
+		logger.Error("Keyword search failed", "error", err)
+		return nil
+	}
+
+	results := make([]*domain.SearchResult, 0, len(docIDs))
+	for _, id := range docIDs {
+		chunk, err := r.store.Get(ctx, id)
 		if err != nil {
-			logger.Error("Keyword search failed", "error", err)
-		} else {
-			// Retrieve full chunks for the docIDs and score them
-			// For now, we reuse the store to get chunks by ID if possible,
-			// or we need a way to get chunks from the store by IDs.
-			// Let's assume we can fetch them.
-			keywordResults = make([]*domain.SearchResult, 0, len(docIDs))
-			for _, id := range docIDs {
-				chunk, err := r.store.Get(ctx, id)
-				if err != nil {
-					continue
-				}
-				score, err := r.scorer.Score(ctx, processed.Filtered, id)
-				if err != nil {
-					continue
-				}
-				keywordResults = append(keywordResults, &domain.SearchResult{
-					Chunk:        chunk,
-					Score:        float32(score),
-					Source:       "keyword",
-					KeywordScore: float32(score),
-				})
-			}
+			continue
 		}
+		score, err := r.scorer.Score(ctx, tokens, id)
+		if err != nil {
+			continue
+		}
+		results = append(results, &domain.SearchResult{
+			Chunk:        chunk,
+			Score:        float32(score),
+			Source:       "keyword",
+			KeywordScore: float32(score),
+		})
 	}
+	return results
+}
 
-	// 4. Hybrid Fusion
-	var combined []*domain.SearchResult
+func (r *Retriever) combineResults(vectorResults, keywordResults []*domain.SearchResult) []*domain.SearchResult {
 	if len(vectorResults) > 0 && len(keywordResults) > 0 {
-		combined = FuseResults(vectorResults, keywordResults, r.config)
+		return FuseResults(vectorResults, keywordResults, r.config)
 	} else if len(vectorResults) > 0 {
-		combined = vectorResults
-	} else {
-		combined = keywordResults
+		return vectorResults
 	}
+	return keywordResults
+}
 
-	// 5. Final Sorting and Truncation
-	sort.Slice(combined, func(i, j int) bool {
-		return combined[i].Score > combined[j].Score
+func (r *Retriever) finalizeResults(results []*domain.SearchResult, limit int, query string) []*domain.SearchResult {
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
 	})
 
-	limit := query.MaxResults
 	if limit <= 0 {
 		limit = 10
 	}
-	if len(combined) > limit {
-		combined = combined[:limit]
+	if len(results) > limit {
+		results = results[:limit]
 	}
 
-	// 6. Calculate Relevance Metadata
-	for _, res := range combined {
-		res.RelevanceScore = CalculateRelevance(res, query.Query)
+	for _, res := range results {
+		res.RelevanceScore = CalculateRelevance(res, query)
 	}
-
-	return combined, nil
+	return results
 }
 
 // AddToInvertedIndex adds chunks to the keyword index
@@ -143,18 +151,6 @@ func (r *Retriever) AddToInvertedIndex(ctx context.Context, chunks []*domain.Cod
 	if r.keyword == nil {
 		return nil
 	}
-
-	// We can delegate to the keyword implementation if it supports adding directly
-	// Or we stick to the original implementation if KeywordSearcher interface expects abstract chunks
-	// However, the original code constructed IndexedDocument struct.
-	// Let's assume the KeywordIndexer interface in indexing package matches what we need or we adapt.
-	// The previous interface definition we added:
-	// type KeywordSearcher interface {
-	//  	Search(ctx context.Context, tokens []string, limit int) ([]string, error)
-	//  	AddToInvertedIndex(ctx context.Context, chunks []*domain.CodeChunk) error
-	// }
-	// So we just call that.
-
 	return r.keyword.AddToInvertedIndex(ctx, chunks)
 }
 

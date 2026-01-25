@@ -37,3 +37,47 @@ func (m *MockScorer) Score(ctx context.Context, queryTokens []string, docID stri
 	}
 	return 0, nil
 }
+
+// MockRedisIndex is a mock for RedisIndex used in BM25 testing
+type MockRedisIndex struct {
+	GetDocCountFunc       func(ctx context.Context) (int, error)
+	GetAvgDocLengthFunc   func(ctx context.Context) (float64, error)
+	GetDocLengthFunc      func(ctx context.Context, docID string) (int, error)
+	GetTermFrequencyFunc  func(ctx context.Context, term, docID string) (int, error)
+	GetDocFrequencyFunc   func(ctx context.Context, term string) (int, error)
+}
+
+func (m *MockRedisIndex) GetDocCount(ctx context.Context) (int, error) {
+	if m.GetDocCountFunc != nil {
+		return m.GetDocCountFunc(ctx)
+	}
+	return 0, nil
+}
+
+func (m *MockRedisIndex) GetAvgDocLength(ctx context.Context) (float64, error) {
+	if m.GetAvgDocLengthFunc != nil {
+		return m.GetAvgDocLengthFunc(ctx)
+	}
+	return 0, nil
+}
+
+func (m *MockRedisIndex) GetDocLength(ctx context.Context, docID string) (int, error) {
+	if m.GetDocLengthFunc != nil {
+		return m.GetDocLengthFunc(ctx, docID)
+	}
+	return 0, nil
+}
+
+func (m *MockRedisIndex) GetTermFrequency(ctx context.Context, term, docID string) (int, error) {
+	if m.GetTermFrequencyFunc != nil {
+		return m.GetTermFrequencyFunc(ctx, term, docID)
+	}
+	return 0, nil
+}
+
+func (m *MockRedisIndex) GetDocFrequency(ctx context.Context, term string) (int, error) {
+	if m.GetDocFrequencyFunc != nil {
+		return m.GetDocFrequencyFunc(ctx, term)
+	}
+	return 0, nil
+}

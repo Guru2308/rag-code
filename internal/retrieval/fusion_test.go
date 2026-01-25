@@ -6,6 +6,19 @@ import (
 	"github.com/Guru2308/rag-code/internal/domain"
 )
 
+func TestDefaultFusionConfig(t *testing.T) {
+	config := DefaultFusionConfig()
+	if config.Strategy != FusionRRF {
+		t.Errorf("DefaultFusionConfig() strategy = %v, want %v", config.Strategy, FusionRRF)
+	}
+	if config.VectorWeight != 0.7 {
+		t.Errorf("DefaultFusionConfig() vector weight = %v, want %v", config.VectorWeight, 0.7)
+	}
+	if config.RRFConstant != 60 {
+		t.Errorf("DefaultFusionConfig() RRF constant = %v, want %v", config.RRFConstant, 60)
+	}
+}
+
 func TestFuseResults(t *testing.T) {
 	vecRes := []*domain.SearchResult{
 		{Chunk: &domain.CodeChunk{ID: "1"}, Score: 0.9},
@@ -77,5 +90,54 @@ func TestNormalizeScores(t *testing.T) {
 	}
 	if norm[1].Score != 0.0 {
 		t.Errorf("Expected 0.0, got %f", norm[1].Score)
+	}
+}
+
+func TestDeduplicateResults(t *testing.T) {
+	results := []*domain.SearchResult{
+		{Chunk: &domain.CodeChunk{ID: "1", Content: "code1"}, Score: 0.9},
+		{Chunk: &domain.CodeChunk{ID: "2", Content: "code2"}, Score: 0.8},
+		{Chunk: &domain.CodeChunk{ID: "1", Content: "code1"}, Score: 0.7}, // duplicate
+	}
+
+	dedup := DeduplicateResults(results)
+	if len(dedup) != 2 {
+		t.Errorf("DeduplicateResults() expected 2 results, got %d", len(dedup))
+	}
+
+	// Should keep the higher score
+	if dedup[0].Chunk.ID != "1" || dedup[0].Score != 0.9 {
+		t.Errorf("DeduplicateResults() expected ID 1 with score 0.9")
+	}
+}
+
+func TestTruncateResults(t *testing.T) {
+	results := []*domain.SearchResult{
+		{Chunk: &domain.CodeChunk{ID: "1"}, Score: 0.9},
+		{Chunk: &domain.CodeChunk{ID: "2"}, Score: 0.8},
+		{Chunk: &domain.CodeChunk{ID: "3"}, Score: 0.7},
+		{Chunk: &domain.CodeChunk{ID: "4"}, Score: 0.6},
+	}
+
+	truncated := TruncateResults(results, 2)
+	if len(truncated) != 2 {
+		t.Errorf("TruncateResults() expected 2 results, got %d", len(truncated))
+	}
+	if truncated[0].Chunk.ID != "1" {
+		t.Errorf("TruncateResults() expected first ID to be 1, got %s", truncated[0].Chunk.ID)
+	}
+	if truncated[1].Chunk.ID != "2" {
+		t.Errorf("TruncateResults() expected second ID to be 2, got %s", truncated[1].Chunk.ID)
+	}
+}
+
+func TestTruncateResults_LimitLargerThanResults(t *testing.T) {
+	results := []*domain.SearchResult{
+		{Chunk: &domain.CodeChunk{ID: "1"}, Score: 0.9},
+	}
+
+	truncated := TruncateResults(results, 10)
+	if len(truncated) != 1 {
+		t.Errorf("TruncateResults() expected 1 result, got %d", len(truncated))
 	}
 }

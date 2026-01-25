@@ -6,15 +6,24 @@ import (
 	"strconv"
 )
 
+// Red isIndexInterface defines methods needed by BM25 scorer
+type RedisIndexInterface interface {
+	GetDocCount(ctx context.Context) (int, error)
+	GetAvgDocLength(ctx context.Context) (float64, error)
+	GetDocLength(ctx context.Context, docID string) (int, error)
+	GetTermFrequency(ctx context.Context, term, docID string) (int, error)
+	GetDocFrequency(ctx context.Context, term string) (int, error)
+}
+
 // BM25Scorer implements the BM25 ranking algorithm
 type BM25Scorer struct {
 	k1       float64 // term frequency saturation parameter (typically 1.2)
 	b        float64 // length normalization parameter (typically 0.75)
-	redisIdx *RedisIndex
+	redisIdx RedisIndexInterface
 }
 
 // NewBM25Scorer creates a new BM25 scorer
-func NewBM25Scorer(k1, b float64, redisIdx *RedisIndex) *BM25Scorer {
+func NewBM25Scorer(k1, b float64, redisIdx RedisIndexInterface) *BM25Scorer {
 	return &BM25Scorer{
 		k1:       k1,
 		b:        b,
