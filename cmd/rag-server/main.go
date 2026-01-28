@@ -10,6 +10,7 @@ import (
 	"github.com/Guru2308/rag-code/internal/api"
 	"github.com/Guru2308/rag-code/internal/config"
 	"github.com/Guru2308/rag-code/internal/embeddings"
+	"github.com/Guru2308/rag-code/internal/graph"
 	"github.com/Guru2308/rag-code/internal/indexing"
 	"github.com/Guru2308/rag-code/internal/llm"
 	"github.com/Guru2308/rag-code/internal/logger"
@@ -91,16 +92,20 @@ func main() {
 		RRFConstant:  60,
 	}
 
+	// 5a. Phase 4: Dependency Graph and Expander
+	depGraph := graph.NewGraph()
+	expander := retrieval.NewContextExpander(depGraph, qStore)
+
 	// 6. Retrieval Engine
-	retr := retrieval.NewRetriever(embedder, qStore, redisIndex, bm25Scorer, preprocessor, fusionConfig)
+	retr := retrieval.NewRetriever(embedder, qStore, redisIndex, bm25Scorer, preprocessor, expander, fusionConfig)
 
 	// 7. Indexing Pipeline
 	parser := indexing.NewGoParser()
 	chunker := indexing.NewSemanticChunker(cfg.MaxChunkSize, cfg.ChunkOverlap)
-	indexer := indexing.NewIndexer(parser, chunker, embedder, qStore, retr)
+	indexer := indexing.NewIndexer(parser, chunker, embedder, qStore, retr, depGraph, cfg.NumWorkers)
 
 	// Initialize Collection in Qdrant
-	// all-minilm (sentence-transformers) typically has 384 dimensions
+	// all-minilm has 384 dimensions
 	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer initCancel()
 	if err := qStore.InitCollection(initCtx, 384); err != nil {

@@ -27,6 +27,7 @@ type Retriever struct {
 	keyword      KeywordSearcher
 	scorer       Scorer
 	preprocessor *QueryPreprocessor
+	expander     *ContextExpander
 	config       FusionConfig
 }
 
@@ -37,6 +38,7 @@ func NewRetriever(
 	keyword KeywordSearcher,
 	scorer Scorer,
 	preprocessor *QueryPreprocessor,
+	expander *ContextExpander,
 	config FusionConfig,
 ) *Retriever {
 	return &Retriever{
@@ -45,6 +47,7 @@ func NewRetriever(
 		keyword:      keyword,
 		scorer:       scorer,
 		preprocessor: preprocessor,
+		expander:     expander,
 		config:       config,
 	}
 }
@@ -67,7 +70,29 @@ func (r *Retriever) Retrieve(ctx context.Context, query domain.SearchQuery) ([]*
 
 	combined := r.combineResults(vectorResults, keywordResults)
 
-	return r.finalizeResults(combined, query.MaxResults, query.Query), nil
+	// Finalize initial results
+	finalResults := r.finalizeResults(combined, query.MaxResults, query.Query)
+
+	// Apply Phase 4: Context Expansion
+	if r.expander != nil {
+		// Enabled by default unless explicitly disabled in filters
+		enabled := true
+		if val, ok := query.Filters["expand_context"]; ok && val == "false" {
+			enabled = false
+		}
+
+		if enabled {
+			// Using DefaultExpandConfig for now
+			expanded, err := r.expander.Expand(ctx, finalResults, DefaultExpandConfig())
+			if err != nil {
+				logger.Error("Context expansion failed", "error", err)
+			} else {
+				finalResults = expanded
+			}
+		}
+	}
+
+	return finalResults, nil
 }
 
 func (r *Retriever) executeVectorSearch(ctx context.Context, query domain.SearchQuery) ([]*domain.SearchResult, error) {

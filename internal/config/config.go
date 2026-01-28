@@ -39,6 +39,9 @@ type Config struct {
 	FusionStrategy     string
 	BM25K1             float64
 	BM25B              float64
+
+	// Concurrency
+	NumWorkers int
 }
 
 // Load reads configuration from environment variables and .env file
@@ -53,10 +56,10 @@ func Load() (*Config, error) {
 		VectorStoreURL: getEnvOrDefault("VECTOR_STORE_URL", "http://localhost:6333"),
 		CollectionName: getEnvOrDefault("COLLECTION_NAME", "code_chunks"),
 		TargetCodebase: os.Getenv("TARGET_CODEBASE"),
-		MaxChunkSize:   256,
+		MaxChunkSize:   512, // all-minilm supports 512 tokens
 		ChunkOverlap:   50,
 		ServerPort:     getEnvOrDefault("SERVER_PORT", "8080"),
-		LogLevel:       getEnvOrDefault("LOG_LEVEL", "info"),
+		LogLevel:       getEnvOrDefault("LOG_LEVEL", "debug"),
 		LogFormat:      getEnvOrDefault("LOG_FORMAT", "json"),
 
 		RedisURL:      getEnvOrDefault("REDIS_URL", "localhost:6379"),
@@ -68,6 +71,8 @@ func Load() (*Config, error) {
 		FusionStrategy:     getEnvOrDefault("FUSION_STRATEGY", "rrf"),
 		BM25K1:             getEnvAsFloat("BM25_K1", 1.2),
 		BM25B:              getEnvAsFloat("BM25_B", 0.75),
+
+		NumWorkers: getEnvAsInt("NUM_WORKERS", 10),
 	}
 
 	// Validate required fields

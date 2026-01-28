@@ -9,6 +9,7 @@ import (
 
 	"github.com/Guru2308/rag-code/internal/domain"
 	"github.com/Guru2308/rag-code/internal/errors"
+	"github.com/Guru2308/rag-code/internal/graph"
 	"github.com/Guru2308/rag-code/internal/logger"
 )
 
@@ -19,8 +20,10 @@ type Indexer struct {
 	embedder       Embedder
 	store          ChunkStore
 	keywordIndexer KeywordIndexer
+	graph          *graph.Graph
 	mu             sync.RWMutex
 	jobs           map[string]*domain.IndexingJob
+	numWorkers     int
 }
 
 // KeywordIndexer defines the interface for adding chunks to the keyword index
@@ -50,14 +53,19 @@ type Config struct {
 }
 
 // NewIndexer creates a new indexer
-func NewIndexer(parser Parser, chunker Chunker, embedder Embedder, store ChunkStore, keywordIndexer KeywordIndexer) *Indexer {
+func NewIndexer(parser Parser, chunker Chunker, embedder Embedder, store ChunkStore, keywordIndexer KeywordIndexer, g *graph.Graph, numWorkers int) *Indexer {
+	if numWorkers <= 0 {
+		numWorkers = 1
+	}
 	return &Indexer{
 		parser:         parser,
 		chunker:        chunker,
 		embedder:       embedder,
 		store:          store,
 		keywordIndexer: keywordIndexer,
+		graph:          g,
 		jobs:           make(map[string]*domain.IndexingJob),
+		numWorkers:     numWorkers,
 	}
 }
 
@@ -105,6 +113,12 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 		processedChunks[i].Embedding = emb
 	}
 
+	// Delete existing chunks for this file to prevent stale data
+	if err := idx.store.Delete(ctx, filePath); err != nil {
+		logger.Warn("Failed to delete old chunks", "path", filePath, "error", err)
+		// Continue anyway to ensure new chunks are indexed
+	}
+
 	// Store chunks
 	if err := idx.store.Store(ctx, processedChunks); err != nil {
 		return errors.Wrap(err, errors.ErrorTypeInternal, "failed to store chunks")
@@ -114,8 +128,13 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 	if idx.keywordIndexer != nil {
 		if err := idx.keywordIndexer.AddToInvertedIndex(ctx, processedChunks); err != nil {
 			logger.Error("Failed to add to keyword index", "error", err, "path", filePath)
-			// Don't fail the whole indexing process if keyword indexing fails
 		}
+	}
+
+	// Update Dependency Graph
+	if idx.graph != nil {
+		builder := graph.NewBuilderWithGraph(idx.graph)
+		builder.Build(ctx, processedChunks)
 	}
 
 	logger.Info("File indexed successfully",
@@ -139,11 +158,13 @@ func (idx *Indexer) Index(ctx context.Context, path string) error {
 	return idx.IndexFile(ctx, path)
 }
 
-// IndexDirectory indexes all files in a directory recursively
+// IndexDirectory indexes all files in a directory recursively with concurrent processing
 func (idx *Indexer) IndexDirectory(ctx context.Context, dirPath string) error {
 	logger.Info("Indexing directory", "path", dirPath)
 
-	return filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+	// Collect all files to index
+	var filesToIndex []string
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -159,14 +180,58 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dirPath string) error {
 
 		// Only index files with known languages
 		if LanguageDetector(path) != "unknown" {
-			if err := idx.IndexFile(ctx, path); err != nil {
-				logger.Error("Failed to index file in directory", "path", path, "error", err)
-				// Continue with other files instead of stopping the whole walk
-			}
+			filesToIndex = append(filesToIndex, path)
 		}
 
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	// Process files concurrently using worker pool
+	numWorkers := idx.numWorkers
+	fileChan := make(chan string, len(filesToIndex))
+	errChan := make(chan error, len(filesToIndex))
+
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for filePath := range fileChan {
+				if err := idx.IndexFile(ctx, filePath); err != nil {
+					logger.Error("Failed to index file in directory", "path", filePath, "error", err)
+					errChan <- err
+				}
+			}
+		}()
+	}
+
+	// Send files to workers
+	for _, filePath := range filesToIndex {
+		fileChan <- filePath
+	}
+	close(fileChan)
+
+	// Wait for all workers to complete
+	wg.Wait()
+	close(errChan)
+
+	// Collect any errors (non-blocking)
+	var errs []error
+	for err := range errChan {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		logger.Warn("Some files failed to index", "failed_count", len(errs), "total", len(filesToIndex))
+	}
+
+	logger.Info("Directory indexing complete", "total_files", len(filesToIndex), "failed", len(errs))
+	return nil
 }
 
 // DeleteFile removes a file from the index
