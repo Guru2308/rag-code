@@ -55,7 +55,7 @@ func TestRetriever_Retrieve(t *testing.T) {
 		VectorWeight: 0.7,
 	}
 
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, mockKeyword, mockScorer, preprocessor, config)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, mockKeyword, mockScorer, preprocessor, nil, nil, nil, config)
 
 	// Test Retrieve
 	results, err := retriever.Retrieve(context.Background(), domain.SearchQuery{Query: "search"})
@@ -79,7 +79,7 @@ func TestRetriever_Retrieve_EmbedderError(t *testing.T) {
 	preprocessor := retrieval.NewQueryPreprocessor()
 	config := retrieval.FusionConfig{Strategy: retrieval.FusionRRF}
 
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, config)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, nil, nil, nil, config)
 
 	_, err := retriever.Retrieve(context.Background(), domain.SearchQuery{Query: "test"})
 	if err == nil {
@@ -105,7 +105,7 @@ func TestRetriever_Retrieve_VectorOnly(t *testing.T) {
 	config := retrieval.FusionConfig{Strategy: retrieval.FusionRRF}
 
 	// No keyword searcher or scorer
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, config)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, nil, nil, nil, config)
 
 	results, err := retriever.Retrieve(context.Background(), domain.SearchQuery{Query: "test", MaxResults: 5})
 	if err != nil {
@@ -148,7 +148,7 @@ func TestRetriever_Retrieve_KeywordOnly(t *testing.T) {
 	preprocessor := retrieval.NewQueryPreprocessor()
 	config := retrieval.FusionConfig{Strategy: retrieval.FusionRRF}
 
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, mockKeyword, mockScorer, preprocessor, config)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, mockKeyword, mockScorer, preprocessor, nil, nil, nil, config)
 
 	results, err := retriever.Retrieve(context.Background(), domain.SearchQuery{Query: "test", MaxResults: 5})
 	if err != nil {
@@ -196,7 +196,7 @@ func TestRetriever_Retrieve_WeightedFusion(t *testing.T) {
 		VectorWeight: 0.7,
 	}
 
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, mockKeyword, mockScorer, preprocessor, config)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, mockKeyword, mockScorer, preprocessor, nil, nil, nil, config)
 
 	results, err := retriever.Retrieve(context.Background(), domain.SearchQuery{Query: "hybrid test"})
 	if err != nil {
@@ -218,7 +218,7 @@ func TestRetriever_AddToInvertedIndex(t *testing.T) {
 	preprocessor := retrieval.NewQueryPreprocessor()
 	config := retrieval.FusionConfig{Strategy: retrieval.FusionRRF}
 
-	retriever := retrieval.NewRetriever(nil, nil, mockKeyword, nil, preprocessor, config)
+	retriever := retrieval.NewRetriever(nil, nil, mockKeyword, nil, preprocessor, nil, nil, nil, config)
 
 	chunks := []*domain.CodeChunk{
 		{ID: "1", Content: "test"},
@@ -234,7 +234,7 @@ func TestRetriever_AddToInvertedIndex_NilKeyword(t *testing.T) {
 	preprocessor := retrieval.NewQueryPreprocessor()
 	config := retrieval.FusionConfig{Strategy: retrieval.FusionRRF}
 
-	retriever := retrieval.NewRetriever(nil, nil, nil, nil, preprocessor, config)
+	retriever := retrieval.NewRetriever(nil, nil, nil, nil, preprocessor, nil, nil, nil, config)
 
 	chunks := []*domain.CodeChunk{
 		{ID: "1", Content: "test"},
@@ -261,7 +261,7 @@ func TestRetriever_Retrieve_EmptyQuery(t *testing.T) {
 	preprocessor := retrieval.NewQueryPreprocessor()
 	config := retrieval.FusionConfig{Strategy: retrieval.FusionRRF}
 
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, config)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, nil, nil, nil, config)
 
 	results, err := retriever.Retrieve(context.Background(), domain.SearchQuery{Query: ""})
 	if err != nil {

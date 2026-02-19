@@ -5,8 +5,10 @@ import (
 	"sort"
 
 	"github.com/Guru2308/rag-code/internal/domain"
+	"github.com/Guru2308/rag-code/internal/hierarchy"
 	"github.com/Guru2308/rag-code/internal/indexing"
 	"github.com/Guru2308/rag-code/internal/logger"
+	"github.com/Guru2308/rag-code/internal/reranker"
 )
 
 // KeywordSearcher defines interface for keyword-based search
@@ -28,6 +30,8 @@ type Retriever struct {
 	scorer       Scorer
 	preprocessor *QueryPreprocessor
 	expander     *ContextExpander
+	reranker     reranker.Reranker
+	hierarchy    hierarchy.Processor
 	config       FusionConfig
 }
 
@@ -39,6 +43,8 @@ func NewRetriever(
 	scorer Scorer,
 	preprocessor *QueryPreprocessor,
 	expander *ContextExpander,
+	rerank reranker.Reranker,
+	hier hierarchy.Processor,
 	config FusionConfig,
 ) *Retriever {
 	return &Retriever{
@@ -48,6 +54,8 @@ func NewRetriever(
 		scorer:       scorer,
 		preprocessor: preprocessor,
 		expander:     expander,
+		reranker:     rerank,
+		hierarchy:    hier,
 		config:       config,
 	}
 }
@@ -73,7 +81,27 @@ func (r *Retriever) Retrieve(ctx context.Context, query domain.SearchQuery) ([]*
 	// Finalize initial results
 	finalResults := r.finalizeResults(combined, query.MaxResults, query.Query)
 
-	// Apply Phase 4: Context Expansion
+	// Phase 5: Reranking
+	if r.reranker != nil {
+		reranked, err := r.reranker.Rerank(ctx, query.Query, finalResults)
+		if err != nil {
+			logger.Error("Reranking failed", "error", err)
+		} else {
+			finalResults = reranked
+		}
+	}
+
+	// Phase 6: Hierarchical Filtering
+	if r.hierarchy != nil {
+		filtered, err := r.hierarchy.Process(ctx, finalResults)
+		if err != nil {
+			logger.Error("Hierarchical processing failed", "error", err)
+		} else {
+			finalResults = filtered
+		}
+	}
+
+	// Apply Phase 4: Context Expansion (doing this after reranking/filtering ensures we expand the BEST chunks)
 	if r.expander != nil {
 		// Enabled by default unless explicitly disabled in filters
 		enabled := true

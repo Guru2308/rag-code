@@ -14,6 +14,7 @@ import (
 	"github.com/Guru2308/rag-code/internal/llm"
 	"github.com/Guru2308/rag-code/internal/logger"
 	"github.com/Guru2308/rag-code/internal/mocks"
+	"github.com/Guru2308/rag-code/internal/prompt"
 	"github.com/Guru2308/rag-code/internal/retrieval"
 	"github.com/gin-gonic/gin"
 )
@@ -25,7 +26,7 @@ func init() {
 func TestServer_HandleStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	server := NewServer("8080", nil, nil, nil)
+	server := NewServer("8080", nil, nil, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/status", nil)
@@ -69,7 +70,7 @@ func TestServer_HandleQuery(t *testing.T) {
 	preprocessor := retrieval.NewQueryPreprocessor()
 	fusionConfig := retrieval.DefaultFusionConfig()
 
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, mockKeyword, mockScorer, preprocessor, fusionConfig)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, mockKeyword, mockScorer, preprocessor, nil, nil, nil, fusionConfig)
 
 	// Setup LLM mock via httptest
 	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +83,8 @@ func TestServer_HandleQuery(t *testing.T) {
 
 	llmClient := llm.NewOllamaLLM(llmServer.URL, "model")
 
-	server := NewServer("8080", nil, retriever, llmClient)
+	prompter, _ := prompt.NewTemplateGenerator("")
+	server := NewServer("8080", nil, retriever, llmClient, prompter)
 
 	// Payload
 	query := domain.SearchQuery{
@@ -108,7 +110,7 @@ func TestServer_HandleQuery(t *testing.T) {
 
 func TestServer_HandleQuery_InvalidJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	server := NewServer("8080", nil, nil, nil)
+	server := NewServer("8080", nil, nil, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/query", bytes.NewBufferString("invalid json"))
@@ -132,8 +134,8 @@ func TestServer_HandleQuery_RetrievalError(t *testing.T) {
 	preprocessor := retrieval.NewQueryPreprocessor()
 	fusionConfig := retrieval.DefaultFusionConfig()
 
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, fusionConfig)
-	server := NewServer("8080", nil, retriever, nil)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, nil, nil, nil, fusionConfig)
+	server := NewServer("8080", nil, retriever, nil, nil)
 
 	query := domain.SearchQuery{Query: "test"}
 	body, _ := json.Marshal(query)
@@ -166,7 +168,7 @@ func TestServer_HandleQuery_LLMError(t *testing.T) {
 	preprocessor := retrieval.NewQueryPreprocessor()
 	fusionConfig := retrieval.DefaultFusionConfig()
 
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, fusionConfig)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, nil, nil, nil, fusionConfig)
 
 	// LLM server that returns error
 	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +177,8 @@ func TestServer_HandleQuery_LLMError(t *testing.T) {
 	defer llmServer.Close()
 
 	llmClient := llm.NewOllamaLLM(llmServer.URL, "model")
-	server := NewServer("8080", nil, retriever, llmClient)
+	prompter, _ := prompt.NewTemplateGenerator("")
+	server := NewServer("8080", nil, retriever, llmClient, prompter)
 
 	query := domain.SearchQuery{Query: "test"}
 	body, _ := json.Marshal(query)
@@ -191,7 +194,7 @@ func TestServer_HandleQuery_LLMError(t *testing.T) {
 
 func TestServer_HandleIndex_InvalidJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	server := NewServer("8080", nil, nil, nil)
+	server := NewServer("8080", nil, nil, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/index", bytes.NewBufferString("invalid"))
@@ -211,7 +214,7 @@ func TestServer_HandleIndex_Success(t *testing.T) {
 	mockStore := &mocks.MockChunkStore{}
 
 	indexer := indexing.NewIndexer(mockParser, mockChunker, mockEmbedder, mockStore, nil)
-	server := NewServer("8080", indexer, nil, nil)
+	server := NewServer("8080", indexer, nil, nil, nil)
 
 	payload := map[string]string{"path": "/tmp/test"}
 	body, _ := json.Marshal(payload)
@@ -244,7 +247,7 @@ func TestServer_HandleQuery_DefaultMaxResults(t *testing.T) {
 	preprocessor := retrieval.NewQueryPreprocessor()
 	fusionConfig := retrieval.DefaultFusionConfig()
 
-	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, fusionConfig)
+	retriever := retrieval.NewRetriever(mockEmbedder, mockStore, nil, nil, preprocessor, nil, nil, nil, fusionConfig)
 
 	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
@@ -255,7 +258,7 @@ func TestServer_HandleQuery_DefaultMaxResults(t *testing.T) {
 	defer llmServer.Close()
 
 	llmClient := llm.NewOllamaLLM(llmServer.URL, "model")
-	server := NewServer("8080", nil, retriever, llmClient)
+	server := NewServer("8080", nil, retriever, llmClient, nil)
 
 	// Query without MaxResults
 	query := domain.SearchQuery{Query: "test"}

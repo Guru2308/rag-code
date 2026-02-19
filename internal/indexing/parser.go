@@ -216,19 +216,97 @@ func (p *GoParser) extractFunctionCalls(fn *ast.FuncDecl) []string {
 	return result
 }
 
-// LanguageDetector determines the programming language of a file
+// LanguageDetector determines the programming language of a file based on its extension.
 func LanguageDetector(filePath string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
 
 	languageMap := map[string]string{
-		".go":   "go",
-		".py":   "python",
-		".js":   "javascript",
-		".ts":   "typescript",
+		// Go
+		".go": "go",
+
+		// Python
+		".py":  "python",
+		".pyw": "python",
+		".pyi": "python",
+
+		// JavaScript
+		".js":  "javascript",
+		".mjs": "javascript",
+		".cjs": "javascript",
+		".jsx": "javascript",
+
+		// TypeScript
+		".ts":  "typescript",
+		".tsx": "typescript",
+
+		// Java
 		".java": "java",
-		".cpp":  "cpp",
-		".c":    "c",
-		".rs":   "rust",
+
+		// Kotlin
+		".kt":  "kotlin",
+		".kts": "kotlin",
+
+		// Swift
+		".swift": "swift",
+
+		// Rust
+		".rs": "rust",
+
+		// C / C++
+		".c":   "c",
+		".h":   "c",
+		".cpp": "cpp",
+		".cc":  "cpp",
+		".cxx": "cpp",
+		".hpp": "cpp",
+		".hxx": "cpp",
+
+		// C#
+		".cs": "csharp",
+
+		// Scala
+		".scala": "scala",
+		".sc":    "scala",
+
+		// Ruby
+		".rb":   "ruby",
+		".rake": "ruby",
+
+		// PHP
+		".php": "php",
+
+		// Shell
+		".sh":   "shell",
+		".bash": "shell",
+		".zsh":  "shell",
+		".fish": "shell",
+
+		// Markdown / docs
+		".md":  "markdown",
+		".mdx": "markdown",
+		".rst": "markdown",
+		".txt": "markdown",
+
+		// Config / data
+		".json": "config",
+		".yaml": "config",
+		".yml":  "config",
+		".toml": "config",
+		".ini":  "config",
+		".env":  "config",
+
+		// SQL
+		".sql": "sql",
+
+		// Web
+		".html":   "web",
+		".htm":    "web",
+		".css":    "web",
+		".scss":   "web",
+		".sass":   "web",
+		".less":   "web",
+		".svelte": "web",
+		".vue":    "web",
 	}
 
 	if lang, ok := languageMap[ext]; ok {
