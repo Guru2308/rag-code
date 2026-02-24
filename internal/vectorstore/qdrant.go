@@ -1,0 +1,256 @@
+package vectorstore
+
+import (
+	"context"
+	"net"
+	"strconv"
+	"strings"
+
+	"github.com/Guru2308/rag-code/internal/domain"
+	"github.com/Guru2308/rag-code/internal/errors"
+	"github.com/Guru2308/rag-code/internal/logger"
+	"github.com/qdrant/go-client/qdrant"
+)
+
+// toValidUTF8 replaces invalid UTF-8 sequences with the replacement character.
+// Qdrant requires valid UTF-8 for string payloads.
+func toValidUTF8(s string) string {
+	return strings.ToValidUTF8(s, "\ufffd")
+}
+
+// QdrantClient defines the interface for Qdrant operations to allow mocking
+type QdrantClient interface {
+	Upsert(ctx context.Context, in *qdrant.UpsertPoints) (*qdrant.UpdateResult, error)
+	Delete(ctx context.Context, in *qdrant.DeletePoints) (*qdrant.UpdateResult, error)
+	Get(ctx context.Context, in *qdrant.GetPoints) ([]*qdrant.RetrievedPoint, error)
+	Query(ctx context.Context, in *qdrant.QueryPoints) ([]*qdrant.ScoredPoint, error)
+	CollectionExists(ctx context.Context, collectionName string) (bool, error)
+	CreateCollection(ctx context.Context, in *qdrant.CreateCollection) error
+}
+
+// QdrantStore implements the ChunkStore interface using Qdrant
+type QdrantStore struct {
+	client     QdrantClient
+	collection string
+}
+
+// NewQdrantStore creates a new Qdrant vector store client
+func NewQdrantStore(url string, collection string) (*QdrantStore, error) {
+	// Parse host and port from URL if provided (expecting http://host:port or host:port)
+	host := "localhost"
+	port := 6334
+
+	cleanURL := strings.TrimPrefix(url, "http://")
+	cleanURL = strings.TrimPrefix(cleanURL, "https://")
+
+	if h, p, err := net.SplitHostPort(cleanURL); err == nil {
+		host = h
+		if pi, err := strconv.Atoi(p); err == nil {
+			// If user provided 6333 (HTTP), we should try 6334 (gRPC) if possible or just use as is
+			// But the go-client is gRPC based.
+			if pi == 6333 {
+				port = 6334
+			} else {
+				port = pi
+			}
+		}
+	} else {
+		host = cleanURL
+	}
+
+	client, err := qdrant.NewClient(&qdrant.Config{
+		Host: host,
+		Port: port,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, errors.ErrorTypeExternal, "failed to create Qdrant client")
+	}
+
+	return &QdrantStore{
+		client:     client,
+		collection: collection,
+	}, nil
+}
+
+// Store persists code chunks in Qdrant
+func (s *QdrantStore) Store(ctx context.Context, chunks []*domain.CodeChunk) error {
+	points := make([]*qdrant.PointStruct, len(chunks))
+
+	for i, chunk := range chunks {
+		payloadMap := map[string]any{
+			"file_path":  toValidUTF8(chunk.FilePath),
+			"language":   toValidUTF8(chunk.Language),
+			"chunk_type": string(chunk.ChunkType),
+			"start_line": float64(chunk.StartLine),
+			"end_line":   float64(chunk.EndLine),
+			"content":    toValidUTF8(chunk.Content),
+		}
+
+		// Store dependencies
+		if len(chunk.Dependencies) > 0 {
+			deps := make([]interface{}, len(chunk.Dependencies))
+			for j, v := range chunk.Dependencies {
+				deps[j] = toValidUTF8(v)
+			}
+			payloadMap["dependencies"] = deps
+		}
+
+		// Store metadata
+		if len(chunk.Metadata) > 0 {
+			metadataMap := make(map[string]any)
+			for k, v := range chunk.Metadata {
+				metadataMap[k] = toValidUTF8(v)
+			}
+			payloadMap["metadata"] = metadataMap
+		}
+
+		payload := qdrant.NewValueMap(payloadMap)
+
+		points[i] = &qdrant.PointStruct{
+			Id:      qdrant.NewID(chunk.ID),
+			Vectors: qdrant.NewVectors(chunk.Embedding...),
+			Payload: payload,
+		}
+	}
+
+	_, err := s.client.Upsert(ctx, &qdrant.UpsertPoints{
+		CollectionName: s.collection,
+		Points:         points,
+	})
+	if err != nil {
+		return errors.Wrap(err, errors.ErrorTypeExternal, "failed to upsert points to Qdrant")
+	}
+
+	logger.Debug("Stored chunks in Qdrant", "count", len(chunks))
+	return nil
+}
+
+// Delete removes a file's chunks from the index
+func (s *QdrantStore) Delete(ctx context.Context, filePath string) error {
+	_, err := s.client.Delete(ctx, &qdrant.DeletePoints{
+		CollectionName: s.collection,
+		Points:         qdrant.NewPointsSelectorFilter(&qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatch("file_path", filePath)}}),
+	})
+	if err != nil {
+		return errors.Wrap(err, errors.ErrorTypeExternal, "failed to delete points from Qdrant")
+	}
+
+	logger.Info("Deleted file chunks from Qdrant", "path", filePath)
+	return nil
+}
+
+// Get retrieves a single chunk by ID
+func (s *QdrantStore) Get(ctx context.Context, id string) (*domain.CodeChunk, error) {
+	resp, err := s.client.Get(ctx, &qdrant.GetPoints{
+		CollectionName: s.collection,
+		Ids:            []*qdrant.PointId{qdrant.NewID(id)},
+		WithPayload:    qdrant.NewWithPayload(true),
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, errors.ErrorTypeExternal, "failed to get point from Qdrant")
+	}
+
+	if len(resp) == 0 {
+		return nil, errors.NotFoundError("chunk not found")
+	}
+
+	point := resp[0]
+	return s.mapPointToChunk(point), nil
+}
+
+// Search performs a vector search in Qdrant
+func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit int) ([]*domain.SearchResult, error) {
+	resp, err := s.client.Query(ctx, &qdrant.QueryPoints{
+		CollectionName: s.collection,
+		Query:          qdrant.NewQuery(queryVector...),
+		Limit:          qdrant.PtrOf(uint64(limit)),
+		WithPayload:    qdrant.NewWithPayload(true),
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, errors.ErrorTypeExternal, "failed to search Qdrant")
+	}
+
+	results := make([]*domain.SearchResult, len(resp))
+	for i, point := range resp {
+		chunk := s.mapScoredPointToChunk(point)
+		results[i] = &domain.SearchResult{
+			Chunk: chunk,
+			Score: float32(point.Score),
+		}
+	}
+
+	return results, nil
+}
+
+// mapPointToChunk converts a Qdrant RetrievedPoint to a CodeChunk
+func (s *QdrantStore) mapPointToChunk(point *qdrant.RetrievedPoint) *domain.CodeChunk {
+	return s.mapPayloadToChunk(point.Id.GetUuid(), point.Payload)
+}
+
+// mapScoredPointToChunk converts a Qdrant ScoredPoint to a CodeChunk
+func (s *QdrantStore) mapScoredPointToChunk(point *qdrant.ScoredPoint) *domain.CodeChunk {
+	return s.mapPayloadToChunk(point.Id.GetUuid(), point.Payload)
+}
+
+// mapPayloadToChunk helper to convert payload map to CodeChunk
+func (s *QdrantStore) mapPayloadToChunk(id string, payload map[string]*qdrant.Value) *domain.CodeChunk {
+	chunk := &domain.CodeChunk{
+		ID:        id,
+		FilePath:  payload["file_path"].GetStringValue(),
+		Language:  payload["language"].GetStringValue(),
+		Content:   payload["content"].GetStringValue(),
+		ChunkType: domain.ChunkType(payload["chunk_type"].GetStringValue()),
+		StartLine: int(payload["start_line"].GetDoubleValue()),
+		EndLine:   int(payload["end_line"].GetDoubleValue()),
+	}
+
+	// Retrieve dependencies
+	if depsValue, ok := payload["dependencies"]; ok {
+		if listValue := depsValue.GetListValue(); listValue != nil {
+			deps := make([]string, len(listValue.Values))
+			for i, v := range listValue.Values {
+				deps[i] = v.GetStringValue()
+			}
+			chunk.Dependencies = deps
+		}
+	}
+
+	// Retrieve metadata
+	if metaValue, ok := payload["metadata"]; ok {
+		if structValue := metaValue.GetStructValue(); structValue != nil {
+			meta := make(map[string]string)
+			for k, v := range structValue.Fields {
+				meta[k] = v.GetStringValue()
+			}
+			chunk.Metadata = meta
+		}
+	}
+
+	return chunk
+}
+
+// InitCollection ensures the collection exists with correct dimensions
+func (s *QdrantStore) InitCollection(ctx context.Context, vectorSize int) error {
+	exists, err := s.client.CollectionExists(ctx, s.collection)
+	if err != nil {
+		return errors.Wrap(err, errors.ErrorTypeExternal, "failed to check collection existence")
+	}
+
+	if exists {
+		return nil
+	}
+
+	logger.Info("Creating Qdrant collection", "name", s.collection, "size", vectorSize)
+	err = s.client.CreateCollection(ctx, &qdrant.CreateCollection{
+		CollectionName: s.collection,
+		VectorsConfig: qdrant.NewVectorsConfig(&qdrant.VectorParams{
+			Size:     uint64(vectorSize),
+			Distance: qdrant.Distance_Cosine,
+		}),
+	})
+	if err != nil {
+		return errors.Wrap(err, errors.ErrorTypeExternal, "failed to create collection")
+	}
+
+	return nil
+}

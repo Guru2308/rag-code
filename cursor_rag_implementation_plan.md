@@ -1,115 +1,85 @@
-# Cursor-style RAG Implementation Plan
+# Cursor-style RAG System — Go Implementation Plan
 
-This document is an implementation-first plan to build a Cursor-style, code-aware RAG system.
-It is meant to be used directly inside Cursor or other IDEs while starting development.
+This document describes a professional, production-grade Go project structure
+and an implementation plan for building a Cursor-style, code-aware RAG system.
 
 ---
 
-## 1. Goal
+## 1. System Goal
 
 Build a system that:
-- Understands a large codebase
+- Understands large codebases
 - Retrieves the right code for a query
 - Grounds LLM responses to reduce hallucinations
 - Supports explain, edit, and refactor workflows
 
 Core principle:
-Retrieval and ranking do the hard thinking. LLM does the final reasoning.
+Retrieval and ranking do the hard thinking. The LLM does the final reasoning.
 
 ---
 
 ## 2. High-Level Architecture
 
-User Query
-  → Intent and Scope Detection
-  → Query Embedding
-  → Hybrid Retrieval (Dense and Sparse)
-  → Hierarchical Filtering
-  → Reranker and Heuristics
-  → Context Selection
-  → Prompt Assembly
-  → LLM
+User Query  
+→ Intent and Scope Detection  
+→ Query Embedding  
+→ Hybrid Retrieval (Dense + Sparse)  
+→ Hierarchical Filtering  
+→ Reranker + Heuristics  
+→ Context Selection  
+→ Prompt Assembly  
+→ LLM  
 
-Background (always running):
+Background:
 File Change → Parse → Chunk → Embed → Local Vector Store
 
 ---
 
-## 3. Phase-wise Implementation Plan
+## 3. Professional Go Project Structure
 
-### Phase 1: Repository Indexing
-
-- Parse code using Tree-sitter or native parsers
-- Extract functions, classes, structs, interfaces
-- Ignore vendor, node_modules, generated files
-
-### Phase 2: Embeddings and Vector Storage
-
-- Generate code embeddings
-- Use local ANN index (FAISS or HNSW)
-- Re-embed only changed files
-
-### Phase 3: Query-Time Retrieval
-
-- Detect intent: explain, edit, refactor
-- Perform dense vector search
-- Perform sparse symbol and path search
-- Merge candidate results
-
-### Phase 4: Hierarchical Selection
-
-- Apply Repo → Module → File → Symbol → Block filtering
-- Remove irrelevant chunks early
-
-### Phase 5: Reranker and Heuristics
-
-- Vector similarity
-- Symbol name match
-- File path relevance
-- Call graph proximity
-- Recency bias
-- Chunk type weighting
-- Deduplication
-
-### Phase 6: Prompt Assembly
-
-- Combine system instructions, user query, and code context
-- Respect token limits
-- Enforce edit or explain constraints
-
-### Phase 7: LLM Integration
-
-- Send grounded prompt to cloud LLM
-- Return explanation, code, or diff
+```
+rag-system/
+├── cmd/
+│   └── rag-server/
+│       └── main.go
+├── internal/
+│   ├── app/
+│   ├── config/
+│   ├── indexing/
+│   │   ├── watcher.go
+│   │   ├── parser.go
+│   │   ├── chunker.go
+│   │   └── indexer.go
+│   ├── embeddings/
+│   ├── vectorstore/
+│   ├── retrieval/
+│   ├── hierarchy/
+│   ├── reranker/
+│   ├── prompt/
+│   ├── llm/
+│   ├── api/
+│   └── domain/
+├── scripts/
+├── docs/
+│   └── architecture/
+├── go.mod
+└── README.md
+```
 
 ---
 
-## 4. Background Indexing Pipeline
+## 4. Phase-wise Plan
 
-Trigger on file open, save, or delete.
-
-Change → Parse → Chunk → Embed → Update Vector Store
-
----
-
-## 5. Milestones
-
-Week 1: Parsing, chunking, embeddings
-Week 2: Hybrid retrieval, hierarchy filtering
-Week 3: Reranking, prompt assembly
-Week 4: LLM integration, testing
+Phase 1: Indexing foundation  
+Phase 2: Embeddings and vector store  
+Phase 3: Hybrid retrieval  
+Phase 4: Hierarchical selection  
+Phase 5: Reranker and heuristics  
+Phase 6: Prompt assembly  
+Phase 7: LLM integration  
 
 ---
 
-## 6. Definition of Done
+## 5. Summary
 
-- Accurate code retrieval
-- Minimal hallucination
-- Fast response time
-- Clear explain vs edit behavior
-
----
-
-## 7. Summary
-
-This is a retrieval-first, structure-aware RAG system for codebases.
+This is a Go-based, retrieval-first, structure-aware RAG system.
