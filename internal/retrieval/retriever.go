@@ -3,10 +3,13 @@ package retrieval
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/Guru2308/rag-code/internal/domain"
+	"github.com/Guru2308/rag-code/internal/hierarchy"
 	"github.com/Guru2308/rag-code/internal/indexing"
 	"github.com/Guru2308/rag-code/internal/logger"
+	"github.com/Guru2308/rag-code/internal/reranker"
 )
 
 // KeywordSearcher defines interface for keyword-based search
@@ -27,6 +30,9 @@ type Retriever struct {
 	keyword      KeywordSearcher
 	scorer       Scorer
 	preprocessor *QueryPreprocessor
+	expander     *ContextExpander
+	reranker     reranker.Reranker
+	hierarchy    hierarchy.Processor
 	config       FusionConfig
 }
 
@@ -37,6 +43,9 @@ func NewRetriever(
 	keyword KeywordSearcher,
 	scorer Scorer,
 	preprocessor *QueryPreprocessor,
+	expander *ContextExpander,
+	rerank reranker.Reranker,
+	hier hierarchy.Processor,
 	config FusionConfig,
 ) *Retriever {
 	return &Retriever{
@@ -45,6 +54,9 @@ func NewRetriever(
 		keyword:      keyword,
 		scorer:       scorer,
 		preprocessor: preprocessor,
+		expander:     expander,
+		reranker:     rerank,
+		hierarchy:    hier,
 		config:       config,
 	}
 }
@@ -58,16 +70,72 @@ func (r *Retriever) Retrieve(ctx context.Context, query domain.SearchQuery) ([]*
 		logger.Warn("Empty query after preprocessing", "query", query.Query)
 	}
 
-	vectorResults, err := r.executeVectorSearch(ctx, query)
+	// When filtering by language, fetch more candidates to improve recall after filtering
+	searchLimit := query.MaxResults * 2
+	if query.Language != "" {
+		searchLimit = query.MaxResults * 5
+	}
+	searchQuery := query
+	searchQuery.MaxResults = searchLimit
+
+	vectorResults, err := r.executeVectorSearch(ctx, searchQuery)
 	if err != nil {
 		return nil, err
 	}
 
-	keywordResults := r.executeKeywordSearch(ctx, processed.Filtered, query.MaxResults)
+	keywordResults := r.executeKeywordSearch(ctx, processed.Filtered, searchLimit)
 
 	combined := r.combineResults(vectorResults, keywordResults)
 
-	return r.finalizeResults(combined, query.MaxResults, query.Query), nil
+	// Multi-language filter: restrict to chunks matching query.Language when set
+	if query.Language != "" {
+		combined = r.filterByLanguage(combined, strings.TrimSpace(strings.ToLower(query.Language)))
+		logger.Debug("Filtered by language", "language", query.Language, "results", len(combined))
+	}
+
+	// Finalize initial results
+	finalResults := r.finalizeResults(combined, query.MaxResults, query.Query)
+
+	// Phase 5: Reranking
+	if r.reranker != nil {
+		reranked, err := r.reranker.Rerank(ctx, query.Query, finalResults)
+		if err != nil {
+			logger.Error("Reranking failed", "error", err)
+		} else {
+			finalResults = reranked
+		}
+	}
+
+	// Phase 6: Hierarchical Filtering
+	if r.hierarchy != nil {
+		filtered, err := r.hierarchy.Process(ctx, finalResults)
+		if err != nil {
+			logger.Error("Hierarchical processing failed", "error", err)
+		} else {
+			finalResults = filtered
+		}
+	}
+
+	// Apply Phase 4: Context Expansion (doing this after reranking/filtering ensures we expand the BEST chunks)
+	if r.expander != nil {
+		// Enabled by default unless explicitly disabled in filters
+		enabled := true
+		if val, ok := query.Filters["expand_context"]; ok && val == "false" {
+			enabled = false
+		}
+
+		if enabled {
+			// Using DefaultExpandConfig for now
+			expanded, err := r.expander.Expand(ctx, finalResults, DefaultExpandConfig())
+			if err != nil {
+				logger.Error("Context expansion failed", "error", err)
+			} else {
+				finalResults = expanded
+			}
+		}
+	}
+
+	return finalResults, nil
 }
 
 func (r *Retriever) executeVectorSearch(ctx context.Context, query domain.SearchQuery) ([]*domain.SearchResult, error) {
@@ -117,6 +185,20 @@ func (r *Retriever) executeKeywordSearch(ctx context.Context, tokens []string, l
 		})
 	}
 	return results
+}
+
+// filterByLanguage keeps only results whose chunk language matches (case-insensitive).
+func (r *Retriever) filterByLanguage(results []*domain.SearchResult, lang string) []*domain.SearchResult {
+	if lang == "" {
+		return results
+	}
+	filtered := make([]*domain.SearchResult, 0, len(results))
+	for _, res := range results {
+		if res.Chunk != nil && strings.ToLower(res.Chunk.Language) == lang {
+			filtered = append(filtered, res)
+		}
+	}
+	return filtered
 }
 
 func (r *Retriever) combineResults(vectorResults, keywordResults []*domain.SearchResult) []*domain.SearchResult {

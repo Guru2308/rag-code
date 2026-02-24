@@ -19,7 +19,7 @@ func TestNewWatcher(t *testing.T) {
 		return nil
 	}
 
-	watcher, err := NewWatcher(handler)
+	watcher, err := NewWatcher(handler, 0)
 	if err != nil {
 		t.Fatalf("NewWatcher() error = %v", err)
 	}
@@ -31,7 +31,7 @@ func TestNewWatcher(t *testing.T) {
 }
 
 func TestNewWatcher_NilHandler(t *testing.T) {
-	_, err := NewWatcher(nil)
+	_, err := NewWatcher(nil, 0)
 	if err == nil {
 		t.Error("NewWatcher() expected error for nil handler")
 	}
@@ -42,7 +42,7 @@ func TestWatcher_AddPath(t *testing.T) {
 		return nil
 	}
 
-	watcher, err := NewWatcher(handler)
+	watcher, err := NewWatcher(handler, 0)
 	if err != nil {
 		t.Fatalf("NewWatcher() error = %v", err)
 	}
@@ -66,7 +66,7 @@ func TestWatcher_AddPath_InvalidPath(t *testing.T) {
 		return nil
 	}
 
-	watcher, err := NewWatcher(handler)
+	watcher, err := NewWatcher(handler, 0)
 	if err != nil {
 		t.Fatalf("NewWatcher() error = %v", err)
 	}
@@ -83,13 +83,13 @@ func TestWatcher_Start_ContextCancellation(t *testing.T) {
 		return nil
 	}
 
-	watcher, err := NewWatcher(handler)
+	watcher, err := NewWatcher(handler, 0)
 	if err != nil {
 		t.Fatalf("NewWatcher() error = %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Start watcher in goroutine
 	done := make(chan error, 1)
 	go func() {
@@ -115,7 +115,7 @@ func TestWatcher_Stop(t *testing.T) {
 		return nil
 	}
 
-	watcher, err := NewWatcher(handler)
+	watcher, err := NewWatcher(handler, 0)
 	if err != nil {
 		t.Fatalf("NewWatcher() error = %v", err)
 	}
@@ -145,7 +145,8 @@ func TestWatcher_HandleEvent_Create(t *testing.T) {
 		return nil
 	}
 
-	watcher, err := NewWatcher(handler)
+	// Use a short debounce for tests so we don't wait long
+	watcher, err := NewWatcher(handler, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewWatcher() error = %v", err)
 	}
@@ -177,7 +178,7 @@ func TestWatcher_HandleEvent_Create(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// Wait for event
+	// Wait for event (debounce + buffer)
 	select {
 	case event := <-eventReceived:
 		if event != FileEventCreate {

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/Guru2308/rag-code/internal/indexing"
 	"github.com/Guru2308/rag-code/internal/llm"
 	"github.com/Guru2308/rag-code/internal/logger"
+	"github.com/Guru2308/rag-code/internal/prompt"
 	"github.com/Guru2308/rag-code/internal/retrieval"
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -22,11 +22,12 @@ type Server struct {
 	indexer   *indexing.Indexer
 	retriever *retrieval.Retriever
 	llm       *llm.OllamaLLM
+	prompter  prompt.Generator
 	port      string
 }
 
 // NewServer creates a new API server
-func NewServer(port string, indexer *indexing.Indexer, retriever *retrieval.Retriever, llmClient *llm.OllamaLLM) *Server {
+func NewServer(port string, indexer *indexing.Indexer, retriever *retrieval.Retriever, llmClient *llm.OllamaLLM, prompter prompt.Generator) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -48,6 +49,7 @@ func NewServer(port string, indexer *indexing.Indexer, retriever *retrieval.Retr
 		indexer:   indexer,
 		retriever: retriever,
 		llm:       llmClient,
+		prompter:  prompter,
 		port:      port,
 	}
 
@@ -67,10 +69,37 @@ func (s *Server) setupRoutes() {
 	}
 }
 
-// Start runs the HTTP server
+// Start runs the HTTP server (blocks until shutdown)
 func (s *Server) Start() error {
 	logger.Info("Starting API server", "port", s.port)
 	return s.Router.Run(":" + s.port)
+}
+
+// ListenAndServe runs the HTTP server and returns when shutdown is requested via ctx.
+// Use this for graceful shutdown on SIGINT/SIGTERM.
+func (s *Server) ListenAndServe(ctx context.Context) error {
+	srv := &http.Server{
+		Addr:    ":" + s.port,
+		Handler: s.Router,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("HTTP server error", "error", err)
+		}
+	}()
+
+	<-ctx.Done()
+	logger.Info("Shutting down server...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+	logger.Info("Server stopped")
+	return nil
 }
 
 type indexRequest struct {
@@ -136,24 +165,20 @@ func (s *Server) handleQuery(c *gin.Context) {
 		return
 	}
 
-	// 2. Prepare LLM prompt
+	// 2. Prepare LLM prompt using the prompter
+	promptStr, err := s.prompter.Generate(c.Request.Context(), req.Query, results)
+	if err != nil {
+		logger.Error("Prompt generation failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate prompt"})
+		return
+	}
+
 	messages := []llm.ChatMessage{
 		{
-			Role:    "system",
-			Content: "You are a helpful code assistant. Use the provided code context to answer the user's question.",
+			Role:    "user",
+			Content: promptStr,
 		},
 	}
-
-	contextStr := "Code Context:\n"
-	for _, res := range results {
-		contextStr += fmt.Sprintf("\n--- %s (Lines %d-%d) ---\n%s\n",
-			res.Chunk.FilePath, res.Chunk.StartLine, res.Chunk.EndLine, res.Chunk.Content)
-	}
-
-	messages = append(messages, llm.ChatMessage{
-		Role:    "user",
-		Content: fmt.Sprintf("%s\n\nQuestion: %s", contextStr, req.Query),
-	})
 
 	// 3. Generate response
 	response, err := s.llm.Generate(c.Request.Context(), messages)

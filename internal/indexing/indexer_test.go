@@ -48,7 +48,7 @@ func TestIndexer_IndexFile_Success(t *testing.T) {
 		},
 	}
 
-	indexer := NewIndexer(mockParser, mockChunker, mockEmbedder, mockStore, mockKeyword)
+	indexer := NewIndexer(mockParser, mockChunker, mockEmbedder, mockStore, mockKeyword, nil, 1)
 
 	// Create a temp file
 	tmpDir, _ := os.MkdirTemp("", "indexer_test")
@@ -64,7 +64,7 @@ func TestIndexer_IndexFile_Success(t *testing.T) {
 }
 
 func TestIndexer_IndexFile_UnknownLanguage(t *testing.T) {
-	indexer := NewIndexer(nil, nil, nil, nil, nil)
+	indexer := NewIndexer(nil, nil, nil, nil, nil, nil, 1)
 
 	tmpDir, _ := os.MkdirTemp("", "indexer_test")
 	defer os.RemoveAll(tmpDir)
@@ -85,7 +85,7 @@ func TestIndexer_IndexFile_NoChunks(t *testing.T) {
 		},
 	}
 
-	indexer := NewIndexer(mockParser, nil, nil, nil, nil)
+	indexer := NewIndexer(mockParser, nil, nil, nil, nil, nil, 1)
 
 	tmpDir, _ := os.MkdirTemp("", "indexer_test")
 	defer os.RemoveAll(tmpDir)
@@ -127,7 +127,7 @@ func TestIndexer_IndexDirectory(t *testing.T) {
 		},
 	}
 
-	indexer := NewIndexer(mockParser, mockChunker, mockEmbedder, mockStore, nil)
+	indexer := NewIndexer(mockParser, mockChunker, mockEmbedder, mockStore, nil, nil, 1)
 
 	tmpDir, _ := os.MkdirTemp("", "indexer_test")
 	defer os.RemoveAll(tmpDir)
@@ -144,7 +144,7 @@ func TestIndexer_IndexDirectory(t *testing.T) {
 }
 
 func TestIndexer_IndexDirectory_SkipHidden(t *testing.T) {
-	indexer := NewIndexer(nil, nil, nil, nil, nil)
+	indexer := NewIndexer(nil, nil, nil, nil, nil, nil, 1)
 
 	tmpDir, _ := os.MkdirTemp("", "indexer_test")
 	defer os.RemoveAll(tmpDir)
@@ -166,7 +166,7 @@ func TestIndexer_Index_File(t *testing.T) {
 		},
 	}
 
-	indexer := NewIndexer(mockParser, nil, nil, nil, nil)
+	indexer := NewIndexer(mockParser, nil, nil, nil, nil, nil, 1)
 
 	tmpDir, _ := os.MkdirTemp("", "indexer_test")
 	defer os.RemoveAll(tmpDir)
@@ -181,7 +181,7 @@ func TestIndexer_Index_File(t *testing.T) {
 }
 
 func TestIndexer_Index_Directory(t *testing.T) {
-	indexer := NewIndexer(nil, nil, nil, nil, nil)
+	indexer := NewIndexer(nil, nil, nil, nil, nil, nil, 1)
 
 	tmpDir, _ := os.MkdirTemp("", "indexer_test")
 	defer os.RemoveAll(tmpDir)
@@ -199,7 +199,7 @@ func TestIndexer_DeleteFile(t *testing.T) {
 		},
 	}
 
-	indexer := NewIndexer(nil, nil, nil, mockStore, nil)
+	indexer := NewIndexer(nil, nil, nil, mockStore, nil, nil, 1)
 
 	err := indexer.DeleteFile(context.Background(), "/path/to/file.go")
 	if err != nil {
@@ -208,7 +208,7 @@ func TestIndexer_DeleteFile(t *testing.T) {
 }
 
 func TestIndexer_GetJob_NotFound(t *testing.T) {
-	indexer := NewIndexer(nil, nil, nil, nil, nil)
+	indexer := NewIndexer(nil, nil, nil, nil, nil, nil, 1)
 
 	_, err := indexer.GetJob("nonexistent")
 	if err == nil {

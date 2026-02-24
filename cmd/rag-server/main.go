@@ -4,15 +4,21 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	_ "github.com/Guru2308/rag-code/docs"
 	"github.com/Guru2308/rag-code/internal/api"
 	"github.com/Guru2308/rag-code/internal/config"
 	"github.com/Guru2308/rag-code/internal/embeddings"
+	"github.com/Guru2308/rag-code/internal/graph"
+	"github.com/Guru2308/rag-code/internal/hierarchy"
 	"github.com/Guru2308/rag-code/internal/indexing"
 	"github.com/Guru2308/rag-code/internal/llm"
 	"github.com/Guru2308/rag-code/internal/logger"
+	"github.com/Guru2308/rag-code/internal/prompt"
+	"github.com/Guru2308/rag-code/internal/reranker"
 	"github.com/Guru2308/rag-code/internal/retrieval"
 	"github.com/Guru2308/rag-code/internal/vectorstore"
 	"github.com/redis/go-redis/v9"
@@ -57,11 +63,20 @@ func main() {
 		"port", cfg.ServerPort,
 	)
 
+	// Root context — cancelled on SIGINT/SIGTERM for clean shutdown
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Initialize services
 	logger.Info("Initializing services")
 
-	// 1. Ollama Embedding Service
-	embedder := embeddings.NewOllamaEmbedder(cfg.OllamaURL, cfg.EmbeddingModel)
+	// 1. Ollama Embedding Service (configurable parallelism)
+	embedder := embeddings.NewOllamaEmbedderWithConfig(
+		cfg.OllamaURL,
+		cfg.EmbeddingModel,
+		cfg.EmbeddingWorkers,
+		cfg.MaxConcurrentEmbeddings,
+	)
 
 	// 2. Ollama LLM Service
 	llmClient := llm.NewOllamaLLM(cfg.OllamaURL, cfg.LLMModel)
@@ -91,16 +106,29 @@ func main() {
 		RRFConstant:  60,
 	}
 
+	// 5a. Phase 4: Dependency Graph and Expander
+	depGraph := graph.NewGraph()
+	expander := retrieval.NewContextExpander(depGraph, qStore)
+
+	// 5b. Phase 5 & 6: Reranker and Hierarchy
+	baseReranker := reranker.NewHeuristicReranker()
+	var reRanker reranker.Reranker = baseReranker
+	if cfg.UseMMR {
+		reRanker = reranker.NewMMRReranker(baseReranker, float32(cfg.MMRLambda))
+		logger.Info("MMR reranking enabled", "lambda", cfg.MMRLambda)
+	}
+	hierFilter := hierarchy.NewHierarchicalFilter(3)
+
 	// 6. Retrieval Engine
-	retr := retrieval.NewRetriever(embedder, qStore, redisIndex, bm25Scorer, preprocessor, fusionConfig)
+	retr := retrieval.NewRetriever(embedder, qStore, redisIndex, bm25Scorer, preprocessor, expander, reRanker, hierFilter, fusionConfig)
 
 	// 7. Indexing Pipeline
-	parser := indexing.NewGoParser()
+	parser := indexing.NewMultiParser()
 	chunker := indexing.NewSemanticChunker(cfg.MaxChunkSize, cfg.ChunkOverlap)
-	indexer := indexing.NewIndexer(parser, chunker, embedder, qStore, retr)
+	indexer := indexing.NewIndexer(parser, chunker, embedder, qStore, retr, depGraph, cfg.NumWorkers)
 
 	// Initialize Collection in Qdrant
-	// all-minilm (sentence-transformers) typically has 384 dimensions
+	// all-minilm has 384 dimensions
 	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer initCancel()
 	if err := qStore.InitCollection(initCtx, 384); err != nil {
@@ -108,13 +136,56 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 7a. Prompt Generator (professional code assistant + reviewer by default)
+	prompter, err := prompt.NewTemplateGenerator(
+		prompt.TemplateByName(cfg.PromptTemplate),
+		prompt.WithMaxTokens(4096),
+		prompt.WithModel(cfg.LLMModel),
+	)
+	if err != nil {
+		logger.Error("Failed to initialize prompt generator", "error", err)
+		os.Exit(1)
+	}
+
+	// 7b. File Watcher — auto re-index on file changes
+	watchPath := os.Getenv("WATCH_PATH")
+	if watchPath == "" {
+		watchPath = "."
+	}
+
+	watcher, err := indexing.NewWatcher(func(watchCtx context.Context, path string, event indexing.FileEvent) error {
+		switch event {
+		case indexing.FileEventDelete:
+			logger.Info("File deleted — removing from index", "path", path)
+			return indexer.DeleteFile(watchCtx, path)
+		default: // create or modify
+			logger.Info("File changed — re-indexing", "path", path, "event", event)
+			return indexer.IndexFile(watchCtx, path)
+		}
+	}, 500*time.Millisecond)
+	if err != nil {
+		logger.Error("Failed to create file watcher", "error", err)
+		os.Exit(1)
+	}
+
+	if err := watcher.AddPath(watchPath); err != nil {
+		logger.Warn("Failed to add watch path — auto-indexing disabled", "path", watchPath, "error", err)
+	} else {
+		logger.Info("File watcher started", "path", watchPath, "debounce", "500ms")
+		go func() {
+			if err := watcher.Start(ctx); err != nil {
+				logger.Error("File watcher stopped with error", "error", err)
+			}
+		}()
+	}
+
 	// 8. API Server
-	srv := api.NewServer(cfg.ServerPort, indexer, retr, llmClient)
+	srv := api.NewServer(cfg.ServerPort, indexer, retr, llmClient, prompter)
 
 	logger.Info("All services initialized successfully")
 
-	// Start server
-	if err := srv.Start(); err != nil {
+	// Start server; blocks until ctx cancelled (SIGINT/SIGTERM), then shuts down gracefully
+	if err := srv.ListenAndServe(ctx); err != nil {
 		logger.Error("API server failed", "error", err)
 		os.Exit(1)
 	}

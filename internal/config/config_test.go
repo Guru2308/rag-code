@@ -24,8 +24,8 @@ func TestLoad(t *testing.T) {
 		if cfg.EmbeddingModel != "all-minilm" {
 			t.Errorf("EmbeddingModel = %v, want %v", cfg.EmbeddingModel, "all-minilm")
 		}
-		if cfg.MaxChunkSize != 256 {
-			t.Errorf("MaxChunkSize = %v, want %v", cfg.MaxChunkSize, 256)
+		if cfg.MaxChunkSize != 512 {
+			t.Errorf("MaxChunkSize = %v, want %v", cfg.MaxChunkSize, 512)
 		}
 	})
 
