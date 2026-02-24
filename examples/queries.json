@@ -1,0 +1,67 @@
+{
+  "description": "Example queries for testing the RAG codebase system",
+  "queries": [
+    {
+      "query": "How is authentication handled?",
+      "max_results": 5,
+      "description": "Find auth-related code"
+    },
+    {
+      "query": "Where is the main entry point or server startup?",
+      "max_results": 5,
+      "description": "Locate application bootstrap"
+    },
+    {
+      "query": "How does the retriever combine vector and keyword search?",
+      "max_results": 5,
+      "description": "Understand hybrid retrieval fusion"
+    },
+    {
+      "query": "Where are embeddings generated for code chunks?",
+      "max_results": 5,
+      "description": "Find embedding pipeline"
+    },
+    {
+      "query": "How does context expansion work with the dependency graph?",
+      "max_results": 5,
+      "description": "Understand graph-based expansion"
+    },
+    {
+      "query": "What functions call the indexer?",
+      "max_results": 5,
+      "description": "Find callers of indexer"
+    },
+    {
+      "query": "How is the prompt assembled for the LLM?",
+      "max_results": 5,
+      "description": "Understand prompt generation"
+    },
+    {
+      "query": "Where is error handling implemented?",
+      "max_results": 5,
+      "description": "Find error handling patterns"
+    },
+    {
+      "query": "How does the chunker split large code blocks?",
+      "max_results": 5,
+      "description": "Understand semantic chunking"
+    },
+    {
+      "query": "What configuration options are available?",
+      "max_results": 5,
+      "description": "Find config/settings"
+    },
+    {
+      "query": "How does the API handle requests?",
+      "max_results": 5,
+      "language": "go",
+      "description": "Multi-language: Go only"
+    },
+    {
+      "query": "Where are Python functions defined?",
+      "max_results": 5,
+      "language": "python",
+      "description": "Multi-language: Python only"
+    }
+  ]
+}

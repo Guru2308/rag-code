@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/joho/godotenv"
 )
@@ -41,7 +42,16 @@ type Config struct {
 	BM25B              float64
 
 	// Concurrency
-	NumWorkers int
+	NumWorkers              int // file-level parallelism (default: 2*CPU)
+	EmbeddingWorkers        int // workers per EmbedBatch call (default: 8)
+	MaxConcurrentEmbeddings int // global cap on concurrent Ollama requests (default: 16)
+
+	// Prompt
+	PromptTemplate string // "professional" (default) or "default" — which prompt template to use
+
+	// MMR (Maximal Marginal Relevance) — diversity in retrieval
+	UseMMR     bool    // enable MMR reranking (default: true)
+	MMRLambda  float64 // relevance vs diversity trade-off 0–1 (default: 0.7)
 }
 
 // Load reads configuration from environment variables and .env file
@@ -72,7 +82,14 @@ func Load() (*Config, error) {
 		BM25K1:             getEnvAsFloat("BM25_K1", 1.2),
 		BM25B:              getEnvAsFloat("BM25_B", 0.75),
 
-		NumWorkers: getEnvAsInt("NUM_WORKERS", 10),
+		NumWorkers:              getEnvAsInt("NUM_WORKERS", max(2*runtime.NumCPU(), 4)),
+		EmbeddingWorkers:        getEnvAsInt("EMBEDDING_WORKERS", 8),
+		MaxConcurrentEmbeddings: getEnvAsInt("MAX_CONCURRENT_EMBEDDINGS", 16),
+
+		PromptTemplate: getEnvOrDefault("PROMPT_TEMPLATE", "professional"),
+
+		UseMMR:    getEnvAsBool("USE_MMR", true),
+		MMRLambda: getEnvAsFloat("MMR_LAMBDA", 0.7),
 	}
 
 	// Validate required fields

@@ -220,11 +220,92 @@ func TestDefaultExpandConfig(t *testing.T) {
 		t.Error("Expected IncludeImports to be false")
 	}
 
+	if !config.IncludeParentType {
+		t.Error("Expected IncludeParentType to be true")
+	}
+
+	if !config.IncludeChildMethods {
+		t.Error("Expected IncludeChildMethods to be true")
+	}
+
 	if config.MaxDepth != 1 {
 		t.Errorf("Expected MaxDepth=1, got %d", config.MaxDepth)
 	}
 
 	if config.MaxChunks != 50 {
 		t.Errorf("Expected MaxChunks=50, got %d", config.MaxChunks)
+	}
+}
+
+func TestContextExpander_RelationDefine(t *testing.T) {
+	g := graph.NewGraph()
+	// Class "MyStruct" with method "DoSomething"
+	g.AddNode(&graph.Node{ID: "class1", Name: "MyStruct", Type: "class"})
+	g.AddNode(&graph.Node{ID: "method1", Name: "DoSomething", Type: "method"})
+	g.AddEdge("class1", "method1", graph.RelationDefine)
+
+	store := newMockChunkStore()
+	chunks := []*domain.CodeChunk{
+		{ID: "class1", Content: "type MyStruct struct {}", ChunkType: domain.ChunkTypeClass},
+		{ID: "method1", Content: "func (m *MyStruct) DoSomething() {}", ChunkType: domain.ChunkTypeMethod},
+	}
+	if err := store.Store(context.Background(), chunks); err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+	// Verify store has both chunks
+	if c, _ := store.Get(context.Background(), "class1"); c == nil {
+		t.Fatal("Store should have class1 chunk")
+	}
+	if c, _ := store.Get(context.Background(), "method1"); c == nil {
+		t.Fatal("Store should have method1 chunk")
+	}
+
+	// Verify graph has correct RelationDefine edges
+	parents := g.GetIncoming("method1", graph.RelationDefine)
+	if len(parents) != 1 || parents[0].ID != "class1" {
+		t.Fatalf("GetIncoming(method1, RelationDefine) should return [class1], got %v", parents)
+	}
+	children := g.GetRelated("class1", graph.RelationDefine)
+	if len(children) != 1 || children[0].ID != "method1" {
+		t.Fatalf("GetRelated(class1, RelationDefine) should return [method1], got %v", children)
+	}
+
+	expander := NewContextExpander(g, store)
+
+	// Retrieve method -> should expand to include parent class
+	results := []*domain.SearchResult{
+		{Chunk: &domain.CodeChunk{ID: "method1", Content: "func (m *MyStruct) DoSomething() {}"}},
+	}
+
+	config := ExpandConfig{
+		IncludeParentType:     true,
+		IncludeChildMethods:   true,
+		IncludeCallers:        false,
+		IncludeCalledFunctions: false,
+		MaxDepth:              1, // Must be >= 1 to allow expansion at depth 0
+		MaxChunks:             10,
+	}
+
+	expanded, err := expander.Expand(context.Background(), results, config)
+	if err != nil {
+		t.Fatalf("Expand failed: %v", err)
+	}
+
+	// Should include method + parent class
+	if len(expanded) != 2 {
+		t.Errorf("Expected 2 chunks (method + parent class), got %d", len(expanded))
+	}
+
+	// Retrieve class -> should expand to include child method
+	results2 := []*domain.SearchResult{
+		{Chunk: &domain.CodeChunk{ID: "class1", Content: "type MyStruct struct {}"}},
+	}
+	expanded2, err := expander.Expand(context.Background(), results2, config)
+	if err != nil {
+		t.Fatalf("Expand failed: %v", err)
+	}
+
+	if len(expanded2) != 2 {
+		t.Errorf("Expected 2 chunks (class + child method), got %d", len(expanded2))
 	}
 }

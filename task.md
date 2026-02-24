@@ -52,11 +52,25 @@
 
 ## Phase 8: Testing and Refinement
 - [x] Write unit tests for each component
-- [ ] Create integration tests
-- [ ] Build example queries and test cases
-- [ ] Performance optimization
+- [x] Create integration tests
+- [x] Build example queries and test cases
+- [x] Performance optimization
 
-## Add-ons
-- [ ] Add support for other languages
-- [ ] Add multi language project support with relation among them
-- [ ] MMR Implementatio
+## Phase 9: Chunker and Indexer Improvements
+- [x] Implement chunk merging logic to avoid small fragments
+- [x] Implement context-aware splitting (respect code blocks, braces)
+- [x] Add overlapping context for better continuity
+- [x] Preserve important metadata (function/class names) when splitting
+- [x] Implement batch processing for vector store insertions
+- [x] Add retry logic for failed indexing operations
+- [x] Implement incremental indexing (file hash tracking)
+- [x] Add metrics and monitoring for indexing process
+
+## Phase 10: Retrieval and Prompt Enhancements
+- [x] Improve graph-based context expansion (parent/child relations)
+- [x] Add sophisticated reranking heuristics (recency, file priority)
+- [x] Implement context window management and truncation in prompt assembly
+- [x] Implement a proper prompt for a professional code assistant that helps to understand the codebase and a professional code reviewer
+- [x] Add support for other languages (Add-ons)
+- [x] Add multi language project support (Add-ons)
+- [x] MMR Implementation (Add-ons)

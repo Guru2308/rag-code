@@ -260,7 +260,11 @@ func TestLanguageDetector(t *testing.T) {
 		{"/path/to/file.java", "java"},
 		{"/path/to/file.cpp", "cpp"},
 		{"/path/to/file.rs", "rust"},
-		{"/path/to/file.txt", "unknown"},
+		{"/path/to/file.lua", "lua"},
+		{"/path/to/file.dart", "dart"},
+		{"/path/to/file.hs", "haskell"},
+		{"/path/to/file.ex", "elixir"},
+		{"/path/to/file.clj", "clojure"},
 	}
 
 	for _, tt := range tests {

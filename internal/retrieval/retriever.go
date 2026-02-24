@@ -3,6 +3,7 @@ package retrieval
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/Guru2308/rag-code/internal/domain"
 	"github.com/Guru2308/rag-code/internal/hierarchy"
@@ -69,14 +70,28 @@ func (r *Retriever) Retrieve(ctx context.Context, query domain.SearchQuery) ([]*
 		logger.Warn("Empty query after preprocessing", "query", query.Query)
 	}
 
-	vectorResults, err := r.executeVectorSearch(ctx, query)
+	// When filtering by language, fetch more candidates to improve recall after filtering
+	searchLimit := query.MaxResults * 2
+	if query.Language != "" {
+		searchLimit = query.MaxResults * 5
+	}
+	searchQuery := query
+	searchQuery.MaxResults = searchLimit
+
+	vectorResults, err := r.executeVectorSearch(ctx, searchQuery)
 	if err != nil {
 		return nil, err
 	}
 
-	keywordResults := r.executeKeywordSearch(ctx, processed.Filtered, query.MaxResults)
+	keywordResults := r.executeKeywordSearch(ctx, processed.Filtered, searchLimit)
 
 	combined := r.combineResults(vectorResults, keywordResults)
+
+	// Multi-language filter: restrict to chunks matching query.Language when set
+	if query.Language != "" {
+		combined = r.filterByLanguage(combined, strings.TrimSpace(strings.ToLower(query.Language)))
+		logger.Debug("Filtered by language", "language", query.Language, "results", len(combined))
+	}
 
 	// Finalize initial results
 	finalResults := r.finalizeResults(combined, query.MaxResults, query.Query)
@@ -170,6 +185,20 @@ func (r *Retriever) executeKeywordSearch(ctx context.Context, tokens []string, l
 		})
 	}
 	return results
+}
+
+// filterByLanguage keeps only results whose chunk language matches (case-insensitive).
+func (r *Retriever) filterByLanguage(results []*domain.SearchResult, lang string) []*domain.SearchResult {
+	if lang == "" {
+		return results
+	}
+	filtered := make([]*domain.SearchResult, 0, len(results))
+	for _, res := range results {
+		if res.Chunk != nil && strings.ToLower(res.Chunk.Language) == lang {
+			filtered = append(filtered, res)
+		}
+	}
+	return filtered
 }
 
 func (r *Retriever) combineResults(vectorResults, keywordResults []*domain.SearchResult) []*domain.SearchResult {

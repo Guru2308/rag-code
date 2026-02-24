@@ -95,6 +95,40 @@ var languagePatterns = map[string][]*regexp.Regexp{
 		regexp.MustCompile(`(?m)^\s*\w[\w-]*\s*\(\s*\)\s*\{`),
 		regexp.MustCompile(`(?m)^\s*function\s+\w+`),
 	},
+	"lua": {
+		regexp.MustCompile(`(?m)^\s*(local\s+)?function\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*(local\s+)?\w+\s*=\s*function`),
+		regexp.MustCompile(`(?m)^\s*function\s+\w+\.\w+`),
+	},
+	"dart": {
+		regexp.MustCompile(`(?m)^\s*(async\s+)?[\w<>]*\s+\w+\s*\([^)]*\)\s*(\{|=>)`),
+		regexp.MustCompile(`(?m)^\s*(abstract\s+|final\s+)?class\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*enum\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*mixin\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*extension\s+\w+`),
+	},
+	"haskell": {
+		regexp.MustCompile(`(?m)^\s*\w[\w']*\s*::`),
+		regexp.MustCompile(`(?m)^\s*(data|newtype|type)\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*class\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*instance\s+[\w.]+`),
+	},
+	"elixir": {
+		regexp.MustCompile(`(?m)^\s*def\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*defp\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*defmodule\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*defprotocol\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*defimpl\s+\w+`),
+	},
+	"clojure": {
+		regexp.MustCompile(`(?m)^\s*\(defn\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*\(defn-\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*\(def\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*\(defmacro\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*\(defprotocol\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*\(defrecord\s+\w+`),
+		regexp.MustCompile(`(?m)^\s*\(defmulti\s+\w+`),
+	},
 }
 
 // chunkTypeForLanguage returns the best ChunkType for a matched pattern keyword.

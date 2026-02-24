@@ -159,6 +159,47 @@ func TestBuilder_Build(t *testing.T) {
 	}
 }
 
+func TestGraph_RelationDefine(t *testing.T) {
+	g := NewGraph()
+	g.AddNode(&Node{ID: "class1", Name: "MyStruct", Type: "class"})
+	g.AddNode(&Node{ID: "method1", Name: "DoSomething", Type: "method"})
+	g.AddEdge("class1", "method1", RelationDefine)
+
+	parents := g.GetIncoming("method1", RelationDefine)
+	if len(parents) != 1 || parents[0].ID != "class1" {
+		t.Errorf("GetIncoming(method1, RelationDefine) = %v, want [class1]", parents)
+	}
+	children := g.GetRelated("class1", RelationDefine)
+	if len(children) != 1 || children[0].ID != "method1" {
+		t.Errorf("GetRelated(class1, RelationDefine) = %v, want [method1]", children)
+	}
+}
+
+func TestBuilder_RelationDefine(t *testing.T) {
+	builder := NewBuilder()
+	chunks := []*domain.CodeChunk{
+		{
+			ID:        "type1",
+			ChunkType: domain.ChunkTypeClass,
+			Metadata:  map[string]string{"name": "MyStruct", "types": "MyStruct"},
+		},
+		{
+			ID:        "method1",
+			ChunkType: domain.ChunkTypeMethod,
+			Metadata:  map[string]string{"name": "DoWork", "receiver": "MyStruct"},
+		},
+	}
+	g := builder.Build(context.Background(), chunks)
+	children := g.GetRelated("type1", RelationDefine)
+	if len(children) != 1 || children[0].ID != "method1" {
+		t.Errorf("Expected define edge from type1 to method1, got %d children", len(children))
+	}
+	parents := g.GetIncoming("method1", RelationDefine)
+	if len(parents) != 1 || parents[0].ID != "type1" {
+		t.Errorf("Expected incoming define edge to method1 from type1, got %d parents", len(parents))
+	}
+}
+
 func TestBuilder_Rebuild(t *testing.T) {
 	builder := NewBuilder()
 

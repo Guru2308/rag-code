@@ -12,6 +12,12 @@ import (
 	"github.com/qdrant/go-client/qdrant"
 )
 
+// toValidUTF8 replaces invalid UTF-8 sequences with the replacement character.
+// Qdrant requires valid UTF-8 for string payloads.
+func toValidUTF8(s string) string {
+	return strings.ToValidUTF8(s, "\ufffd")
+}
+
 // QdrantClient defines the interface for Qdrant operations to allow mocking
 type QdrantClient interface {
 	Upsert(ctx context.Context, in *qdrant.UpsertPoints) (*qdrant.UpdateResult, error)
@@ -72,19 +78,19 @@ func (s *QdrantStore) Store(ctx context.Context, chunks []*domain.CodeChunk) err
 
 	for i, chunk := range chunks {
 		payloadMap := map[string]any{
-			"file_path":  chunk.FilePath,
-			"language":   chunk.Language,
+			"file_path":  toValidUTF8(chunk.FilePath),
+			"language":   toValidUTF8(chunk.Language),
 			"chunk_type": string(chunk.ChunkType),
 			"start_line": float64(chunk.StartLine),
 			"end_line":   float64(chunk.EndLine),
-			"content":    chunk.Content,
+			"content":    toValidUTF8(chunk.Content),
 		}
 
 		// Store dependencies
 		if len(chunk.Dependencies) > 0 {
 			deps := make([]interface{}, len(chunk.Dependencies))
-			for i, v := range chunk.Dependencies {
-				deps[i] = v
+			for j, v := range chunk.Dependencies {
+				deps[j] = toValidUTF8(v)
 			}
 			payloadMap["dependencies"] = deps
 		}
@@ -93,7 +99,7 @@ func (s *QdrantStore) Store(ctx context.Context, chunks []*domain.CodeChunk) err
 		if len(chunk.Metadata) > 0 {
 			metadataMap := make(map[string]any)
 			for k, v := range chunk.Metadata {
-				metadataMap[k] = v
+				metadataMap[k] = toValidUTF8(v)
 			}
 			payloadMap["metadata"] = metadataMap
 		}

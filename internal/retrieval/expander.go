@@ -25,8 +25,11 @@ func NewContextExpander(g *graph.Graph, store indexing.ChunkStore) *ContextExpan
 
 // ExpandConfig configures context expansion behavior
 type ExpandConfig struct {
-	IncludeCalledFunctions bool // Include functions called by retrieved chunks
+	IncludeCalledFunctions bool // Include functions called by retrieved chunks (children)
+	IncludeCallers         bool // Include functions that call retrieved chunks (parents)
 	IncludeImports         bool // Include imported modules
+	IncludeParentType      bool // Include parent class/struct when chunk is a method
+	IncludeChildMethods   bool // Include child methods when chunk is a class/struct
 	MaxDepth               int  // Maximum depth for recursive expansion
 	MaxChunks              int  // Maximum number of chunks to return
 }
@@ -35,7 +38,10 @@ type ExpandConfig struct {
 func DefaultExpandConfig() ExpandConfig {
 	return ExpandConfig{
 		IncludeCalledFunctions: true,
+		IncludeCallers:         true,  // Also walk upward to callers
 		IncludeImports:         false, // Imports are usually too broad
+		IncludeParentType:      true,  // Include parent class when we have a method
+		IncludeChildMethods:    true,  // Include methods when we have a class
 		MaxDepth:               1,     // Only direct dependencies
 		MaxChunks:              50,    // Limit total context size
 	}
@@ -92,7 +98,8 @@ func (e *ContextExpander) Expand(
 	return expanded, nil
 }
 
-// getRelatedChunks recursively retrieves related chunks
+// getRelatedChunks recursively retrieves related chunks in both
+// directions: callees (functions called) and callers (who calls this).
 func (e *ContextExpander) getRelatedChunks(
 	ctx context.Context,
 	chunkID string,
@@ -112,7 +119,7 @@ func (e *ContextExpander) getRelatedChunks(
 
 	related := make([]*domain.SearchResult, 0)
 
-	// Get related nodes from graph
+	// ── Children: functions called by this chunk ──────────────────────────
 	if config.IncludeCalledFunctions {
 		calledNodes := e.graph.GetRelated(chunkID, graph.RelationCall)
 		logger.Debug("Checking related nodes",
@@ -124,8 +131,6 @@ func (e *ContextExpander) getRelatedChunks(
 			if seen[node.ID] {
 				continue
 			}
-
-			// Check limit before adding more
 			if currentCount+len(related) >= config.MaxChunks {
 				break
 			}
@@ -136,21 +141,20 @@ func (e *ContextExpander) getRelatedChunks(
 				continue
 			}
 
-			logger.Info("Found related chunk",
+			logger.Info("Found callee chunk",
 				"source_id", chunkID,
 				"target_id", node.ID,
 				"target_name", node.Name,
-				"type", "call")
+			)
 
 			seen[node.ID] = true
 			related = append(related, &domain.SearchResult{
 				Chunk:          chunk,
-				Score:          0.5, // Lower score for expanded context
-				Source:         "expansion",
+				Score:          0.5,
+				Source:         "expansion:callee",
 				RelevanceScore: 0.5,
 			})
 
-			// Recursively expand
 			if depth+1 < config.MaxDepth && currentCount+len(related) < config.MaxChunks {
 				nested := e.getRelatedChunks(ctx, node.ID, config, seen, depth+1, currentCount+len(related))
 				for _, n := range nested {
@@ -163,14 +167,124 @@ func (e *ContextExpander) getRelatedChunks(
 		}
 	}
 
+	// ── Parents: functions that call this chunk ───────────────────────────
+	if config.IncludeCallers && currentCount+len(related) < config.MaxChunks {
+		callerNodes := e.graph.GetIncoming(chunkID, graph.RelationCall)
+		logger.Debug("Checking caller nodes",
+			"chunk_id", chunkID,
+			"caller_count", len(callerNodes),
+		)
+
+		for _, node := range callerNodes {
+			if seen[node.ID] {
+				continue
+			}
+			if currentCount+len(related) >= config.MaxChunks {
+				break
+			}
+
+			chunk, err := e.store.Get(ctx, node.ID)
+			if err != nil {
+				logger.Debug("Failed to retrieve caller chunk", "id", node.ID, "error", err)
+				continue
+			}
+
+			logger.Info("Found caller chunk",
+				"source_id", chunkID,
+				"caller_id", node.ID,
+				"caller_name", node.Name,
+			)
+
+			seen[node.ID] = true
+			related = append(related, &domain.SearchResult{
+				Chunk:          chunk,
+				Score:          0.4, // Slightly lower: caller context is broader
+				Source:         "expansion:caller",
+				RelevanceScore: 0.4,
+			})
+		}
+	}
+
+	// ── Parent type (class/struct that defines this method) ─────────────────
+	if config.IncludeParentType && currentCount+len(related) < config.MaxChunks {
+		parentNodes := e.graph.GetIncoming(chunkID, graph.RelationDefine)
+		for _, node := range parentNodes {
+			if seen[node.ID] {
+				continue
+			}
+			if currentCount+len(related) >= config.MaxChunks {
+				break
+			}
+
+			chunk, err := e.store.Get(ctx, node.ID)
+			if err != nil {
+				logger.Debug("Failed to retrieve parent type chunk", "id", node.ID, "error", err)
+				continue
+			}
+			if chunk == nil {
+				logger.Warn("Parent type chunk not in store", "id", node.ID)
+				continue
+			}
+
+			logger.Debug("Found parent type chunk",
+				"method_id", chunkID,
+				"parent_id", node.ID,
+				"parent_name", node.Name,
+			)
+
+			seen[node.ID] = true
+			related = append(related, &domain.SearchResult{
+				Chunk:          chunk,
+				Score:          0.55,
+				Source:         "expansion:parent_type",
+				RelevanceScore: 0.55,
+			})
+		}
+	}
+
+	// ── Child methods (methods defined by this class/struct) ───────────────
+	if config.IncludeChildMethods && currentCount+len(related) < config.MaxChunks {
+		childNodes := e.graph.GetRelated(chunkID, graph.RelationDefine)
+		for _, node := range childNodes {
+			if seen[node.ID] {
+				continue
+			}
+			if currentCount+len(related) >= config.MaxChunks {
+				break
+			}
+
+			chunk, err := e.store.Get(ctx, node.ID)
+			if err != nil {
+				logger.Debug("Failed to retrieve child method chunk", "id", node.ID, "error", err)
+				continue
+			}
+			if chunk == nil {
+				continue
+			}
+
+			logger.Debug("Found child method chunk",
+				"parent_id", chunkID,
+				"child_id", node.ID,
+				"child_name", node.Name,
+			)
+
+			seen[node.ID] = true
+			related = append(related, &domain.SearchResult{
+				Chunk:          chunk,
+				Score:          0.55,
+				Source:         "expansion:child_method",
+				RelevanceScore: 0.55,
+			})
+		}
+	}
+
+	// ── Imports ───────────────────────────────────────────────────────────
 	if config.IncludeImports && currentCount+len(related) < config.MaxChunks {
 		importedNodes := e.graph.GetRelated(chunkID, graph.RelationImport)
 		for _, node := range importedNodes {
 			if seen[node.ID] {
 				continue
 			}
-
-			// Check limit before adding more
 			if currentCount+len(related) >= config.MaxChunks {
 				break
 			}
@@ -185,7 +299,7 @@ func (e *ContextExpander) getRelatedChunks(
 			related = append(related, &domain.SearchResult{
 				Chunk:          chunk,
 				Score:          0.3, // Even lower score for imports
-				Source:         "expansion",
+				Source:         "expansion:import",
 				RelevanceScore: 0.3,
 			})
 		}

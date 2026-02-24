@@ -70,8 +70,13 @@ func main() {
 	// Initialize services
 	logger.Info("Initializing services")
 
-	// 1. Ollama Embedding Service
-	embedder := embeddings.NewOllamaEmbedder(cfg.OllamaURL, cfg.EmbeddingModel)
+	// 1. Ollama Embedding Service (configurable parallelism)
+	embedder := embeddings.NewOllamaEmbedderWithConfig(
+		cfg.OllamaURL,
+		cfg.EmbeddingModel,
+		cfg.EmbeddingWorkers,
+		cfg.MaxConcurrentEmbeddings,
+	)
 
 	// 2. Ollama LLM Service
 	llmClient := llm.NewOllamaLLM(cfg.OllamaURL, cfg.LLMModel)
@@ -106,7 +111,12 @@ func main() {
 	expander := retrieval.NewContextExpander(depGraph, qStore)
 
 	// 5b. Phase 5 & 6: Reranker and Hierarchy
-	reRanker := reranker.NewHeuristicReranker()
+	baseReranker := reranker.NewHeuristicReranker()
+	var reRanker reranker.Reranker = baseReranker
+	if cfg.UseMMR {
+		reRanker = reranker.NewMMRReranker(baseReranker, float32(cfg.MMRLambda))
+		logger.Info("MMR reranking enabled", "lambda", cfg.MMRLambda)
+	}
 	hierFilter := hierarchy.NewHierarchicalFilter(3)
 
 	// 6. Retrieval Engine
@@ -126,8 +136,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 7a. Prompt Generator
-	prompter, err := prompt.NewTemplateGenerator("")
+	// 7a. Prompt Generator (professional code assistant + reviewer by default)
+	prompter, err := prompt.NewTemplateGenerator(
+		prompt.TemplateByName(cfg.PromptTemplate),
+		prompt.WithMaxTokens(4096),
+		prompt.WithModel(cfg.LLMModel),
+	)
 	if err != nil {
 		logger.Error("Failed to initialize prompt generator", "error", err)
 		os.Exit(1)
@@ -170,8 +184,8 @@ func main() {
 
 	logger.Info("All services initialized successfully")
 
-	// Start server (blocks until error or context cancelled)
-	if err := srv.Start(); err != nil {
+	// Start server; blocks until ctx cancelled (SIGINT/SIGTERM), then shuts down gracefully
+	if err := srv.ListenAndServe(ctx); err != nil {
 		logger.Error("API server failed", "error", err)
 		os.Exit(1)
 	}

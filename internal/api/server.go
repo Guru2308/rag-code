@@ -69,10 +69,37 @@ func (s *Server) setupRoutes() {
 	}
 }
 
-// Start runs the HTTP server
+// Start runs the HTTP server (blocks until shutdown)
 func (s *Server) Start() error {
 	logger.Info("Starting API server", "port", s.port)
 	return s.Router.Run(":" + s.port)
+}
+
+// ListenAndServe runs the HTTP server and returns when shutdown is requested via ctx.
+// Use this for graceful shutdown on SIGINT/SIGTERM.
+func (s *Server) ListenAndServe(ctx context.Context) error {
+	srv := &http.Server{
+		Addr:    ":" + s.port,
+		Handler: s.Router,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("HTTP server error", "error", err)
+		}
+	}()
+
+	<-ctx.Done()
+	logger.Info("Shutting down server...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+	logger.Info("Server stopped")
+	return nil
 }
 
 type indexRequest struct {

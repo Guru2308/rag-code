@@ -213,7 +213,7 @@ func TestServer_HandleIndex_Success(t *testing.T) {
 	mockEmbedder := &mocks.MockEmbedder{}
 	mockStore := &mocks.MockChunkStore{}
 
-	indexer := indexing.NewIndexer(mockParser, mockChunker, mockEmbedder, mockStore, nil)
+	indexer := indexing.NewIndexer(mockParser, mockChunker, mockEmbedder, mockStore, nil, nil, 1)
 	server := NewServer("8080", indexer, nil, nil, nil)
 
 	payload := map[string]string{"path": "/tmp/test"}

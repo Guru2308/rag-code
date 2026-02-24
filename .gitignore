@@ -6,3 +6,5 @@ dist/
 build/
 *.out
 .scannerwork/
+
+rag-server

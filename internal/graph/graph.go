@@ -31,18 +31,20 @@ type Edge struct {
 
 // Graph represents an in-memory dependency graph
 type Graph struct {
-	mu    sync.RWMutex
-	nodes map[string]*Node      // nodeID -> Node
-	edges map[string][]*Edge    // nodeID -> outgoing edges
-	index map[string][]string   // name -> nodeIDs (for lookup by name)
+	mu       sync.RWMutex
+	nodes    map[string]*Node    // nodeID -> Node
+	edges    map[string][]*Edge  // nodeID -> outgoing edges
+	incoming map[string][]*Edge  // nodeID -> incoming edges (reverse index)
+	index    map[string][]string // name   -> nodeIDs (for lookup by name)
 }
 
 // NewGraph creates a new empty graph
 func NewGraph() *Graph {
 	return &Graph{
-		nodes: make(map[string]*Node),
-		edges: make(map[string][]*Edge),
-		index: make(map[string][]string),
+		nodes:    make(map[string]*Node),
+		edges:    make(map[string][]*Edge),
+		incoming: make(map[string][]*Edge),
+		index:    make(map[string][]string),
 	}
 }
 
@@ -52,14 +54,14 @@ func (g *Graph) AddNode(node *Node) {
 	defer g.mu.Unlock()
 
 	g.nodes[node.ID] = node
-	
+
 	// Index by name for efficient lookup
 	if node.Name != "" {
 		g.index[node.Name] = append(g.index[node.Name], node.ID)
 	}
 }
 
-// AddEdge adds an edge between two nodes
+// AddEdge adds a directed edge between two nodes and updates the reverse index.
 func (g *Graph) AddEdge(from, to string, relation RelationType) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -70,6 +72,7 @@ func (g *Graph) AddEdge(from, to string, relation RelationType) {
 		Relation: relation,
 	}
 	g.edges[from] = append(g.edges[from], edge)
+	g.incoming[to] = append(g.incoming[to], edge)
 }
 
 // GetNode retrieves a node by ID
@@ -133,7 +136,7 @@ func (g *Graph) GetAllRelated(nodeID string) []*Node {
 
 	seen := make(map[string]bool)
 	related := make([]*Node, 0)
-	
+
 	for _, edge := range edges {
 		if !seen[edge.To] {
 			if node, ok := g.nodes[edge.To]; ok {
@@ -145,6 +148,50 @@ func (g *Graph) GetAllRelated(nodeID string) []*Node {
 	return related
 }
 
+// GetIncoming retrieves all nodes that have an edge pointing TO nodeID,
+// optionally filtered by relation type. Pass an empty string to get all.
+func (g *Graph) GetIncoming(nodeID string, relationType RelationType) []*Node {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	edges, exists := g.incoming[nodeID]
+	if !exists {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	result := make([]*Node, 0)
+	for _, edge := range edges {
+		if relationType != "" && edge.Relation != relationType {
+			continue
+		}
+		if !seen[edge.From] {
+			if node, ok := g.nodes[edge.From]; ok {
+				result = append(result, node)
+				seen[edge.From] = true
+			}
+		}
+	}
+	return result
+}
+
+// GetParentFiles returns the file paths of all nodes that directly call or
+// import the given nodeID. Useful for "who uses this" expansion.
+func (g *Graph) GetParentFiles(nodeID string) []string {
+	callers := g.GetIncoming(nodeID, RelationCall)
+	importers := g.GetIncoming(nodeID, RelationImport)
+
+	seen := make(map[string]bool)
+	var files []string
+	for _, n := range append(callers, importers...) {
+		if !seen[n.FilePath] && n.FilePath != "" {
+			seen[n.FilePath] = true
+			files = append(files, n.FilePath)
+		}
+	}
+	return files
+}
+
 // Clear removes all nodes and edges from the graph
 func (g *Graph) Clear() {
 	g.mu.Lock()
@@ -152,6 +199,7 @@ func (g *Graph) Clear() {
 
 	g.nodes = make(map[string]*Node)
 	g.edges = make(map[string][]*Edge)
+	g.incoming = make(map[string][]*Edge)
 	g.index = make(map[string][]string)
 }
 

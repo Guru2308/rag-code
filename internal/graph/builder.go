@@ -46,6 +46,9 @@ func (b *Builder) Build(ctx context.Context, chunks []*domain.CodeChunk) *Graph 
 		b.addEdgesForChunk(chunk)
 	}
 
+	// Third pass: Add parent/child (RelationDefine) edges for class→method
+	b.addDefineEdges(chunks)
+
 	stats := b.graph.Stats()
 	logger.Info("Built dependency graph", 
 		"nodes", stats["nodes"],
@@ -130,6 +133,66 @@ func (b *Builder) addEdgesForChunk(chunk *domain.CodeChunk) {
 			"calls", chunk.Metadata["calls"],
 		)
 	}
+}
+
+// addDefineEdges creates RelationDefine edges for class/struct → method containment.
+// When a method has a receiver (e.g. *MyStruct), we link the type declaration to the method.
+func (b *Builder) addDefineEdges(chunks []*domain.CodeChunk) {
+	for _, chunk := range chunks {
+		if chunk.ChunkType != domain.ChunkTypeMethod {
+			continue
+		}
+		receiver, ok := chunk.Metadata["receiver"]
+		if !ok || receiver == "" {
+			continue
+		}
+
+		// Find the class/struct/type declaration that defines this receiver
+		parentNodes := b.findTypeByName(receiver, chunks)
+		for _, parent := range parentNodes {
+			b.graph.AddEdge(parent.ID, chunk.ID, RelationDefine)
+			logger.Debug("Created define edge",
+				"parent", parent.Name,
+				"child", chunk.Metadata["name"],
+			)
+		}
+	}
+}
+
+// findTypeByName finds nodes that represent a type (class/struct) with the given name.
+// Matches metadata["name"] or metadata["types"] (comma-separated) across chunks.
+func (b *Builder) findTypeByName(typeName string, chunks []*domain.CodeChunk) []*Node {
+	seen := make(map[string]bool)
+	var result []*Node
+
+	// Direct name match via graph index
+	byName := b.graph.GetNodesByName(typeName)
+	for _, n := range byName {
+		if (n.Type == string(domain.ChunkTypeClass) || n.Type == "struct") && !seen[n.ID] {
+			seen[n.ID] = true
+			result = append(result, n)
+		}
+	}
+
+	// Check types metadata for multi-type blocks (e.g. "A,B,C")
+	for _, chunk := range chunks {
+		if chunk.ChunkType != domain.ChunkTypeClass {
+			continue
+		}
+		if types, ok := chunk.Metadata["types"]; ok {
+			for _, t := range strings.Split(types, ",") {
+				if strings.TrimSpace(t) == typeName {
+					node, exists := b.graph.GetNode(chunk.ID)
+					if exists && !seen[node.ID] {
+						seen[node.ID] = true
+						result = append(result, node)
+					}
+					break
+				}
+			}
+		}
+	}
+	return result
 }
 
 // findMethodsByReceiver attempts to find methods when receiver notation is used (e.g., r.Method)

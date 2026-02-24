@@ -298,6 +298,25 @@ func LanguageDetector(filePath string) string {
 		// SQL
 		".sql": "sql",
 
+		// Lua
+		".lua": "lua",
+
+		// Dart
+		".dart": "dart",
+
+		// Haskell
+		".hs":  "haskell",
+		".lhs": "haskell",
+
+		// Elixir
+		".ex":   "elixir",
+		".exs":  "elixir",
+
+		// Clojure
+		".clj":  "clojure",
+		".cljs": "clojure",
+		".cljc": "clojure",
+
 		// Web
 		".html":   "web",
 		".htm":    "web",
